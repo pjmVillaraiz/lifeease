@@ -9,6 +9,7 @@ class HomeHeaderWidget extends StatelessWidget {
   final String? avatarImageUrl;
   final int pendingCount;
   final VoidCallback onNotificationTap;
+  final VoidCallback? onAvatarTap;
 
   const HomeHeaderWidget({
     super.key,
@@ -16,6 +17,7 @@ class HomeHeaderWidget extends StatelessWidget {
     this.avatarImageUrl,
     required this.pendingCount,
     required this.onNotificationTap,
+    this.onAvatarTap,
   });
 
   String _getGreeting() {
@@ -46,7 +48,7 @@ class HomeHeaderWidget extends StatelessWidget {
         children: [
           // Avatar
           GestureDetector(
-            onTap: () {},
+            onTap: onAvatarTap,
             child: Container(
               width: 52,
               height: 52,

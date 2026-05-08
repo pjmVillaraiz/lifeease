@@ -27,7 +27,6 @@ class ReminderCardWidget extends StatefulWidget {
 class _ReminderCardWidgetState extends State<ReminderCardWidget>
     with SingleTickerProviderStateMixin {
   late AnimationController _dismissController;
-  final bool _isMenuOpen = false;
 
   @override
   void initState() {

@@ -4,6 +4,8 @@ import 'package:sizer/sizer.dart';
 
 import '../../core/language_controller.dart';
 import '../../core/settings_controller.dart';
+import '../../services/translation/language_translation_processing_module.dart';
+import '../../services/usability/sus_processing_module.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/custom_icon_widget.dart';
 
@@ -16,6 +18,9 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final SettingsController _controller = SettingsController.instance;
+  final SusProcessingModule _susProcessor = SusProcessingModule();
+  final LanguageTranslationProcessingModule _translationProcessor =
+      LanguageTranslationProcessingModule();
 
   final List<String> _leadTimeOptions = [
     '5 minutes',
@@ -242,7 +247,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 color: theme.colorScheme.onSurfaceVariant,
                 size: 20,
               ),
-              onTap: () => _showSnackBar('Privacy Policy coming soon'),
+              onTap: _showPrivacyDialog,
             ),
             _buildDivider(theme),
             _buildInfoTile(
@@ -255,7 +260,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 color: theme.colorScheme.onSurfaceVariant,
                 size: 20,
               ),
-              onTap: () => _showSnackBar('Help & Support coming soon'),
+              onTap: _showHelpDialog,
+            ),
+          ]),
+          SizedBox(height: 2.h),
+          _buildSectionHeader(theme, tr('Usability', 'Usability'), 'analytics'),
+          _buildCard(theme, [
+            _buildInfoTile(
+              theme,
+              icon: 'fact_check',
+              iconColor: AppTheme.secondaryTeal,
+              title: 'System Usability Scale (SUS)',
+              trailing: CustomIconWidget(
+                iconName: 'play_arrow',
+                color: theme.colorScheme.onSurfaceVariant,
+                size: 20,
+              ),
+              onTap: _runSusBaselineEvaluation,
             ),
           ]),
           SizedBox(height: 3.h),
@@ -370,7 +391,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Switch(
                   value: value,
                   onChanged: onChanged,
-                  activeColor: AppTheme.primaryBlue,
+                  activeThumbColor: AppTheme.primaryBlue,
                 ),
               ],
             ),
@@ -512,13 +533,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _showSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message, style: GoogleFonts.nunitoSans(fontSize: 14)),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        duration: const Duration(seconds: 2),
+  void _showPrivacyDialog() {
+    final text = tr(
+      'Your data stays on your device by default. Emergency calls use your phone dialer only.',
+      'Nananatili sa iyong device ang data mo bilang default. Ang emergency calls ay sa phone dialer lang.',
+    );
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Privacy Policy'),
+        content: Text(text),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showHelpDialog() {
+    final sample = _translationProcessor.translate(
+      text: "add reminder",
+      toTagalog: _controller.tagalog,
+    );
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Help & Support'),
+        content: Text(
+          "Try voice commands like: '$sample'.\n"
+          "Use Call Family for emergency dial routing.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _runSusBaselineEvaluation() {
+    final baselineAnswers = <int>[4, 2, 4, 2, 4, 2, 4, 2, 4, 2];
+    final score = _susProcessor.computeScore(baselineAnswers);
+    final band = _susProcessor.getRatingBand(score);
+    final purpose = _susProcessor.getPurposeDescription();
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('SUS Evaluation'),
+        content: Text(
+          "$purpose\n\nBaseline SUS Score: ${score.toStringAsFixed(1)} ($band)",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
       ),
     );
   }

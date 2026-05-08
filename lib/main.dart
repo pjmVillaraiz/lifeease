@@ -62,7 +62,9 @@ class MyApp extends StatelessWidget {
                   builder: (context, child) {
                     return MediaQuery(
                       data: MediaQuery.of(context).copyWith(
-                        textScaleFactor: settingsController.textScaleFactor,
+                        textScaler: TextScaler.linear(
+                          settingsController.textScaleFactor,
+                        ),
                       ),
                       child: child!,
                     );

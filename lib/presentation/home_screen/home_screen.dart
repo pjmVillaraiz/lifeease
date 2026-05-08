@@ -2,12 +2,14 @@ import 'package:flutter/services.dart';
 
 import '../../core/app_export.dart';
 import '../../core/language_controller.dart';
-import '../../routes/app_routes.dart';
-import '../../theme/app_theme.dart';
 import '../../widgets/app_navigation.dart';
 import '../../widgets/emergency_fab_widget.dart';
 import '../../widgets/empty_state_widget.dart';
 import '../../widgets/loading_skeleton_widget.dart';
+import '../../services/scheduling/rule_based_scheduling_engine.dart';
+import '../../services/translation/language_translation_processing_module.dart';
+import '../../services/voice/speech_processing_module.dart';
+import '../../services/voice/voice_command_processing_module.dart';
 import '../settings_screen/settings_screen.dart';
 import '../profile_screen/profile_screen.dart';
 import './widgets/big_button_row_widget.dart';
@@ -194,6 +196,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _showSuggestion = true;
   final int _suggestionHour = 8;
   bool _isListening = false;
+  final SpeechProcessingModule _speechModule = SpeechProcessingModule();
+  final VoiceCommandProcessingModule _voiceProcessor =
+      VoiceCommandProcessingModule();
+  final LanguageTranslationProcessingModule _translationProcessor =
+      LanguageTranslationProcessingModule();
+  final RuleBasedSchedulingEngine _schedulingEngine = RuleBasedSchedulingEngine();
 
   String tr(bool isTagalog, String en, String tl) {
     return isTagalog ? tl : en;
@@ -325,27 +333,108 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  void _onSpeakCommand() {
+  Future<void> _onSpeakCommand() async {
     HapticFeedback.heavyImpact();
     setState(() => _isListening = true);
-    // TODO: Replace with VoiceInputManager.startListening() → IntentParser.parse() for production
-    Future.delayed(const Duration(seconds: 2), () {
-      if (!mounted) return;
-      setState(() => _isListening = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Voice input requires microphone permission. Tap Add Reminder instead.',
-            style: GoogleFonts.nunitoSans(fontSize: 14),
-          ),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          duration: const Duration(seconds: 3),
+    final spokenText = await _speechModule.listenOnce();
+    if (!mounted) return;
+
+    setState(() => _isListening = false);
+    if (spokenText != null && spokenText.isNotEmpty) {
+      await _handleCommandText(spokenText);
+      return;
+    }
+    await _showManualCommandDialog();
+  }
+
+  Future<void> _handleCommandText(String input) async {
+    final result = _voiceProcessor.parse(input);
+    if (!mounted) return;
+
+    String message;
+    switch (result.type) {
+      case VoiceIntentType.addReminder:
+        message = "Command recognized: Add reminder.";
+        Navigator.pushNamed(context, AppRoutes.addReminderScreen);
+        break;
+      case VoiceIntentType.callEmergency:
+        message = "Command recognized: Emergency call. Tap Call Family to confirm.";
+        break;
+      case VoiceIntentType.translate:
+        final translated = _translationProcessor.translate(
+          text: input,
+          toTagalog: !LanguageController.isTagalog.value,
+        );
+        message = "Translation: $translated";
+        break;
+      case VoiceIntentType.summarize:
+        message = "Summary: ${result.summary}";
+        break;
+      case VoiceIntentType.unknown:
+        message = "Command not recognized. Try add reminder, translate, or summarize.";
+        break;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          "$message Models: Gemma 2B-it + MobileBERT Intent.",
+          style: GoogleFonts.nunitoSans(fontSize: 14),
         ),
-      );
-    });
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+    await _speechModule.speak(message);
+  }
+
+  Future<void> _showManualCommandDialog() async {
+    final controller = TextEditingController();
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          "Voice Command Processing Module",
+          style: GoogleFonts.nunitoSans(fontWeight: FontWeight.w700),
+        ),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: "Type command, e.g. remind me at 8 AM",
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Cancel"),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _handleCommandText(controller.text);
+            },
+            child: const Text("Process"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _onNotificationTap() {
+    final pendingItems = _reminders
+        .where((r) => !r.isCompleted)
+        .map((r) => r.title)
+        .toList();
+    final summary = _voiceProcessor.summarizeText(pendingItems.join(". "));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          summary.isEmpty ? "No pending reminders." : "Reminder summary: $summary",
+          style: GoogleFonts.nunitoSans(fontSize: 14),
+        ),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   void _onNavTap(int index) {
@@ -418,7 +507,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 avatarImageUrl:
                     'https://images.pexels.com/photos/1181519/pexels-photo-1181519.jpeg',
                 pendingCount: _reminders.length,
-                onNotificationTap: () {},
+                onNotificationTap: _onNotificationTap,
+                onAvatarTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ProfileScreen()),
+                ),
               ),
               const SizedBox(height: 8),
               Padding(
@@ -438,6 +531,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     suggestedHour: _suggestionHour,
                     isTagalog: isTagalog,
                     onAddNow: (hour) {
+                      final suggestion = _schedulingEngine.buildSuggestion(
+                        category: "pill",
+                        isRepeating: true,
+                      );
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            suggestion.note,
+                            style: GoogleFonts.nunitoSans(fontSize: 13),
+                          ),
+                        ),
+                      );
                       Navigator.pushNamed(
                         context,
                         AppRoutes.addReminderScreen,
@@ -471,7 +576,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 avatarImageUrl:
                     'https://images.pexels.com/photos/1181519/pexels-photo-1181519.jpeg',
                 pendingCount: _reminders.length,
-                onNotificationTap: () {},
+                onNotificationTap: _onNotificationTap,
+                onAvatarTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ProfileScreen()),
+                ),
               ),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -490,11 +599,25 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   child: SuggestionCardWidget(
                     suggestedHour: _suggestionHour,
                     isTagalog: isTagalog,
-                    onAddNow: (hour) => Navigator.pushNamed(
-                      context,
-                      AppRoutes.addReminderScreen,
-                      arguments: {'prefillHour': hour},
-                    ),
+                    onAddNow: (hour) {
+                      final suggestion = _schedulingEngine.buildSuggestion(
+                        category: "pill",
+                        isRepeating: true,
+                      );
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            suggestion.note,
+                            style: GoogleFonts.nunitoSans(fontSize: 13),
+                          ),
+                        ),
+                      );
+                      Navigator.pushNamed(
+                        context,
+                        AppRoutes.addReminderScreen,
+                        arguments: {'prefillHour': hour},
+                      );
+                    },
                     onDismiss: () => setState(() => _showSuggestion = false),
                   ),
                 ),

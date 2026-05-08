@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../services/emergency/emergency_route_processing_module.dart';
 import '../theme/app_theme.dart';
 
 class EmergencyContact {
@@ -160,6 +161,8 @@ class _ContactsBottomSheet extends StatefulWidget {
 }
 
 class _ContactsBottomSheetState extends State<_ContactsBottomSheet> {
+  final EmergencyRouteProcessingModule _emergencyRouteProcessor =
+      EmergencyRouteProcessingModule();
   String? _countingDownPhone;
   String? _countingDownName;
   int _secondsLeft = 0;
@@ -197,21 +200,21 @@ class _ContactsBottomSheetState extends State<_ContactsBottomSheet> {
     });
   }
 
-  void _executeCall(String phone) {
-    // TODO: Replace with url_launcher — launch('tel:$phone')
-    if (mounted) {
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Calling $phone...',
-            style: GoogleFonts.nunitoSans(fontSize: 15),
-          ),
-          backgroundColor: AppTheme.success,
-          duration: const Duration(seconds: 2),
+  Future<void> _executeCall(String phone) async {
+    final launched = await _emergencyRouteProcessor.call(phone);
+    if (!mounted) return;
+
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          launched ? 'Calling $phone...' : 'Unable to open dialer for $phone',
+          style: GoogleFonts.nunitoSans(fontSize: 15),
         ),
-      );
-    }
+        backgroundColor: launched ? AppTheme.success : AppTheme.errorRed,
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   @override

@@ -1,9 +1,11 @@
 import 'package:flutter/services.dart';
 
-import '../core/app_export.dart';
-import '../core/language_controller.dart';
-import '../core/settings_controller.dart';
-import '../widgets/custom_error_widget.dart';
+import 'package:lifeease/core/utils/app_export.dart';
+import 'package:lifeease/core/constants/env_config.dart';
+import 'package:lifeease/shared/providers/language_controller.dart';
+import 'package:lifeease/shared/providers/settings_controller.dart';
+import 'package:lifeease/core/services/supabase_config.dart';
+import 'package:lifeease/shared/widgets/custom_error_widget.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,6 +29,8 @@ void main() async {
 
   // 🚨 CRITICAL: Device orientation lock - DO NOT REMOVE
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  await EnvConfig.load();
+  await SupabaseConfig.initialize();
 
   final settingsController = await SettingsController.load();
 
@@ -50,7 +54,7 @@ class MyApp extends StatelessWidget {
               valueListenable: LanguageController.isTagalog,
               builder: (context, isTagalog, child) {
                 return MaterialApp(
-                  title: 'lifeease',
+                  title: 'LifeEase',
                   theme: isHighContrast
                       ? AppTheme.highContrastLightTheme
                       : AppTheme.lightTheme,

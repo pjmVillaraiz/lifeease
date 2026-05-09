@@ -1,3 +1,24 @@
+# Flutter
+.dart_tool/
+.packages
+build/
+
+# Environment
+.env
+supabase/functions/.env
+
+# Android
+android/.gradle/
+android/local.properties
+
+# iOS
+ios/Pods/
+
+# VSCode
+.vscode/
+
+# Mac
+.DS_Store
 # Miscellaneous
 *.class
 *.log

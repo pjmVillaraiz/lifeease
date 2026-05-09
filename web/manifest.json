@@ -1,6 +1,6 @@
 {
-    "name": "lifeease",
-    "short_name": "lifeease",
+    "name": "LifeEase",
+    "short_name": "LifeEase",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

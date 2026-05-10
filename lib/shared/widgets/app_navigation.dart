@@ -42,7 +42,45 @@ class AppNavigation extends StatelessWidget {
                 size: 24,
               ),
               label: tr(isTagalog, 'Home', 'Tahanan'),
-              tooltip: tr(isTagalog, 'Home', 'Tahanan'),
+            ),
+            NavigationDestination(
+              icon: CustomIconWidget(
+                iconName: 'alarm_outlined',
+                color: theme.colorScheme.onSurface.withAlpha(153),
+                size: 24,
+              ),
+              selectedIcon: CustomIconWidget(
+                iconName: 'alarm',
+                color: theme.colorScheme.primary,
+                size: 24,
+              ),
+              label: tr(isTagalog, 'Reminders', 'Mga Paalala'),
+            ),
+            NavigationDestination(
+              icon: CustomIconWidget(
+                iconName: 'mic_none',
+                color: theme.colorScheme.onSurface.withAlpha(153),
+                size: 24,
+              ),
+              selectedIcon: CustomIconWidget(
+                iconName: 'mic',
+                color: theme.colorScheme.primary,
+                size: 24,
+              ),
+              label: tr(isTagalog, 'Voice', 'Boses'),
+            ),
+            NavigationDestination(
+              icon: CustomIconWidget(
+                iconName: 'translate',
+                color: theme.colorScheme.onSurface.withAlpha(153),
+                size: 24,
+              ),
+              selectedIcon: CustomIconWidget(
+                iconName: 'g_translate',
+                color: theme.colorScheme.primary,
+                size: 24,
+              ),
+              label: tr(isTagalog, 'Translate', 'Isalin'),
             ),
             NavigationDestination(
               icon: CustomIconWidget(
@@ -56,21 +94,6 @@ class AppNavigation extends StatelessWidget {
                 size: 24,
               ),
               label: tr(isTagalog, 'Settings', 'Mga Setting'),
-              tooltip: tr(isTagalog, 'Settings', 'Mga Setting'),
-            ),
-            NavigationDestination(
-              icon: CustomIconWidget(
-                iconName: 'person_outlined',
-                color: theme.colorScheme.onSurface.withAlpha(153),
-                size: 24,
-              ),
-              selectedIcon: CustomIconWidget(
-                iconName: 'person',
-                color: theme.colorScheme.primary,
-                size: 24,
-              ),
-              label: tr(isTagalog, 'Profile', 'Profile'),
-              tooltip: tr(isTagalog, 'Profile', 'Profile'),
             ),
           ],
         );

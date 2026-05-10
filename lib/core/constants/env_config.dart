@@ -1,32 +1,38 @@
+import 'dart:convert';
 import 'package:flutter/services.dart';
 
 class EnvConfig {
-  static Map<String, String>? _assetValues;
+  static Map<String, dynamic>? _assetValues;
 
   static Future<void> load() async {
     if (_assetValues != null) return;
-    _assetValues = {};
-
+    
     try {
-      final raw = await rootBundle.loadString('assets/.env');
-      for (final line in raw.split('\n')) {
-        final trimmed = line.trim();
-        if (trimmed.isEmpty || trimmed.startsWith('#')) continue;
-        final separator = trimmed.indexOf('=');
-        if (separator <= 0) continue;
-        final key = trimmed.substring(0, separator).trim();
-        final value = trimmed.substring(separator + 1).trim();
-        _assetValues![key] = value;
-      }
-    } catch (_) {
-      // Optional in local demo builds. Production can provide --dart-define
-      // values or bundle assets/.env through CI secret injection.
+      final raw = await rootBundle.loadString('env.json');
+      final Map<String, dynamic> jsonMap = jsonDecode(raw);
+      _assetValues = jsonMap;
+    } catch (e) {
+      throw Exception(
+        '🚨 CRITICAL ERROR: Failed to load env.json!\n'
+        'Ensure that env.json exists in the project root, is valid JSON, and is added to pubspec.yaml assets.\n'
+        'Error details: \$e'
+      );
     }
   }
 
   static String get(String key) {
     final dartDefine = String.fromEnvironment(key);
     if (dartDefine.isNotEmpty) return dartDefine;
-    return _assetValues?[key] ?? '';
+    
+    if (_assetValues == null) {
+      throw Exception('EnvConfig.load() must be called before accessing keys.');
+    }
+    
+    final value = _assetValues![key]?.toString();
+    if (value == null || value.trim().isEmpty) {
+      throw Exception('🚨 CRITICAL ERROR: Missing or empty environment key: \$key');
+    }
+    
+    return value;
   }
 }

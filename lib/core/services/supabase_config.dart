@@ -1,5 +1,5 @@
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter/foundation.dart';
 
 import 'package:lifeease/core/constants/env_config.dart';
 
@@ -18,16 +18,68 @@ class SupabaseConfig {
   }
 
   static Future<void> initialize() async {
-    await Hive.initFlutter();
-    if (_initialized || !isConfigured) return;
+    if (_initialized) return;
+    
+    try {
+      final url = EnvConfig.get('SUPABASE_URL');
+      final anonKey = EnvConfig.get('SUPABASE_ANON_KEY');
 
-    await Supabase.initialize(
-      url: EnvConfig.get('SUPABASE_URL'),
-      anonKey: EnvConfig.get('SUPABASE_ANON_KEY'),
-      authOptions: const FlutterAuthClientOptions(
-        authFlowType: AuthFlowType.pkce,
-      ),
-    );
-    _initialized = true;
+      await Supabase.initialize(
+        url: url,
+        anonKey: anonKey,
+        authOptions: const FlutterAuthClientOptions(
+          authFlowType: AuthFlowType.pkce,
+        ),
+      );
+      
+      _initialized = true;
+      
+      // Perform a robust connection test
+      await _testConnection();
+      
+    } catch (e) {
+      if (kDebugMode) {
+        print('🚨 SUPABASE INITIALIZATION ERROR: \$e');
+      }
+      throw Exception('Failed to initialize Supabase. Check your URL and anon key.');
+    }
+  }
+
+  static Future<void> _testConnection() async {
+    final client = maybeClient;
+    if (client == null) throw Exception('SupabaseClient is null after initialization.');
+    
+    try {
+      if (kDebugMode) {
+        print('⚡ Testing Supabase connection...');
+      }
+      
+      // A simple non-destructive query to verify DB connection and anon key
+      // If the 'users' or 'reminders' table exists, this will return quickly.
+      // We limit to 1 to just check if the endpoint is reachable.
+      await client.from('reminders').select('id').limit(1);
+      
+      if (kDebugMode) {
+        print('✅ Supabase connected successfully!');
+      }
+    } on PostgrestException catch (e) {
+      // If we get a PostgrestException, it means we connected to the database successfully,
+      // but maybe the table doesn't exist or RLS blocked it. That's fine, connection is verified.
+      if (e.code == 'PGRST116' || e.code == '42P01') {
+         if (kDebugMode) {
+           print('⚠️ Supabase connected, but got DB error (Table missing or RLS): \${e.message}');
+         }
+      } else {
+        if (kDebugMode) {
+          print('⚠️ Supabase Postgrest Error: \${e.message}');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('🚨 SUPABASE CONNECTION TEST FAILED: \$e');
+      }
+      // Rethrow to alert the developer that the URL might be unreachable
+      throw Exception('Supabase endpoint unreachable. Are you connected to the internet? Error: \$e');
+    }
   }
 }

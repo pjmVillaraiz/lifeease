@@ -102,20 +102,25 @@ class ReminderRepository {
     if (client == null) return;
     final reminders = await _offline.loadReminders();
     for (final reminder in reminders) {
-      if (reminder['sync_status'] == 'delete_queued') {
-        final id = reminder['id']?.toString();
-        if (id != null && id.length == 36) {
-          await client.from('reminders').delete().eq('id', id);
-          await _offline.deleteReminder(id);
+      try {
+        if (reminder['sync_status'] == 'delete_queued') {
+          final id = reminder['id']?.toString();
+          if (id != null && id.length == 36) {
+            await client.from('reminders').delete().eq('id', id);
+            await _offline.deleteReminder(id);
+          }
+          continue;
         }
-        continue;
+        if (reminder['sync_status'] != 'queued') continue;
+        await client
+            .from('reminders')
+            .upsert(
+              _remoteReminder({...reminder, 'sync_status': 'synced'}, client),
+            );
+        await _offline.updateReminder(reminder['id'].toString(), {...reminder, 'sync_status': 'synced'});
+      } catch (e) {
+        // Skip on individual failure to prevent loop halt
       }
-      if (reminder['sync_status'] != 'queued') continue;
-      await client
-          .from('reminders')
-          .upsert(
-            _remoteReminder({...reminder, 'sync_status': 'synced'}, client),
-          );
     }
   }
 

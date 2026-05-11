@@ -220,7 +220,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 if (_isEditing) ...[
                   _buildDivider(theme),
                   InkWell(
-                    onTap: () => _showAddContactDialog(),
+                    onTap: _openAddContactPage,
                     borderRadius: const BorderRadius.only(
                       bottomLeft: Radius.circular(16),
                       bottomRight: Radius.circular(16),
@@ -684,84 +684,359 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Future<void> _showAddContactDialog() async {
-    final nameController = TextEditingController();
-    final relationshipController = TextEditingController();
-    final phoneController = TextEditingController();
+  Future<void> _openAddContactPage() async {
+    final contact = await Navigator.push<Map<String, String>>(
+      context,
+      MaterialPageRoute(builder: (_) => const AddEmergencyContactScreen()),
+    );
 
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(
-          tr(
-            LanguageController.isTagalog.value,
-            'Add Emergency Contact',
-            'Magdagdag ng Emergency Contact',
+    if (contact == null) {
+      return;
+    }
+
+    setState(() => _emergencyContacts.add(contact));
+    _showSnackBar('Emergency contact added.');
+  }
+}
+
+class AddEmergencyContactScreen extends StatefulWidget {
+  const AddEmergencyContactScreen({super.key});
+
+  @override
+  State<AddEmergencyContactScreen> createState() =>
+      _AddEmergencyContactScreenState();
+}
+
+class _AddEmergencyContactScreenState extends State<AddEmergencyContactScreen> {
+  static const List<String> _relationships = [
+    'Husband',
+    'Wife',
+    'Brother',
+    'Sister',
+    'Doctor',
+    'Nurse',
+    'Father',
+    'Mother',
+    'Son',
+    'Daughter',
+    'Friend',
+    'Caregiver',
+    'Other',
+  ];
+
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _phoneController = TextEditingController();
+  String _relationship = _relationships.first;
+
+  String tr(bool isTagalog, String en, String tl) => isTagalog ? tl : en;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _phoneController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return ValueListenableBuilder<bool>(
+      valueListenable: LanguageController.isTagalog,
+      builder: (context, isTagalog, child) {
+        return Scaffold(
+          backgroundColor: theme.scaffoldBackgroundColor,
+          appBar: AppBar(
+            leading: IconButton(
+              icon: CustomIconWidget(
+                iconName: 'arrow_back',
+                color: theme.colorScheme.onSurface,
+                size: 24,
+              ),
+              onPressed: () => Navigator.pop(context),
+              tooltip: tr(isTagalog, 'Back', 'Bumalik'),
+            ),
+            title: Text(
+              tr(
+                isTagalog,
+                'Add Emergency Contact',
+                'Magdagdag ng Emergency Contact',
+              ),
+              style: GoogleFonts.nunitoSans(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
+            backgroundColor: theme.colorScheme.surface,
+            elevation: 0,
+            scrolledUnderElevation: 2,
           ),
-          style: GoogleFonts.nunitoSans(fontWeight: FontWeight.w700),
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(labelText: 'Name'),
-                textInputAction: TextInputAction.next,
+          body: SafeArea(
+            child: Form(
+              key: _formKey,
+              child: ListView(
+                padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 2.h),
+                children: [
+                  _buildHeaderCard(theme, isTagalog),
+                  SizedBox(height: 2.h),
+                  _buildFormCard(theme, isTagalog),
+                  SizedBox(height: 3.h),
+                  ElevatedButton.icon(
+                    onPressed: _saveContact,
+                    icon: const Icon(Icons.check, color: Colors.white),
+                    label: Text(
+                      tr(isTagalog, 'Save Contact', 'I-save ang Contact'),
+                      style: GoogleFonts.nunitoSans(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryBlue,
+                      minimumSize: const Size.fromHeight(52),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              TextField(
-                controller: relationshipController,
-                decoration: const InputDecoration(labelText: 'Relationship'),
-                textInputAction: TextInputAction.next,
-              ),
-              TextField(
-                controller: phoneController,
-                decoration: const InputDecoration(labelText: 'Phone'),
-                keyboardType: TextInputType.phone,
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(
-              tr(LanguageController.isTagalog.value, 'Cancel', 'Kanselahin'),
             ),
           ),
-          ElevatedButton(
-            onPressed: () {
-              final name = nameController.text.trim();
-              final phone = phoneController.text.trim();
-              if (name.isEmpty || phone.isEmpty) {
-                _showSnackBar('Name and phone are required.');
-                return;
-              }
+        );
+      },
+    );
+  }
 
-              setState(() {
-                _emergencyContacts.add({
-                  'name': name,
-                  'relationship': relationshipController.text.trim().isEmpty
-                      ? 'Emergency'
-                      : relationshipController.text.trim(),
-                  'phone': phone,
-                  'avatarUrl':
-                      'https://images.pexels.com/photos/1181519/pexels-photo-1181519.jpeg',
-                });
-              });
-              Navigator.pop(ctx);
-              _showSnackBar('Emergency contact added.');
-            },
-            child: Text(
-              tr(LanguageController.isTagalog.value, 'Save', 'I-save'),
+  Widget _buildHeaderCard(ThemeData theme, bool isTagalog) {
+    return Container(
+      padding: EdgeInsets.all(4.w),
+      decoration: BoxDecoration(
+        color: AppTheme.errorContainer.withAlpha(120),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.errorRed.withAlpha(55)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: AppTheme.errorRed.withAlpha(30),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(
+              Icons.emergency,
+              color: AppTheme.errorRed,
+              size: 26,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  tr(
+                    isTagalog,
+                    'Who should LifeEase call first?',
+                    'Sino ang unang tatawagan ng LifeEase?',
+                  ),
+                  style: GoogleFonts.nunitoSans(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    color: theme.colorScheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  tr(
+                    isTagalog,
+                    'Add a trusted person or healthcare provider for emergencies.',
+                    'Magdagdag ng pinagkakatiwalaang tao o healthcare provider para sa emergency.',
+                  ),
+                  style: GoogleFonts.nunitoSans(
+                    fontSize: 14,
+                    height: 1.35,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
       ),
     );
+  }
 
-    nameController.dispose();
-    relationshipController.dispose();
-    phoneController.dispose();
+  Widget _buildFormCard(ThemeData theme, bool isTagalog) {
+    return Container(
+      padding: EdgeInsets.all(4.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: theme.colorScheme.outline.withAlpha(30),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          _buildTextField(
+            theme,
+            controller: _nameController,
+            icon: Icons.person,
+            label: tr(isTagalog, 'Full Name', 'Buong Pangalan'),
+            hint: 'Juan dela Cruz',
+            validator: (value) {
+              if (value == null || value.trim().isEmpty) {
+                return tr(
+                  isTagalog,
+                  'Name is required',
+                  'Kailangan ang pangalan',
+                );
+              }
+              return null;
+            },
+          ),
+          SizedBox(height: 2.h),
+          _buildTextField(
+            theme,
+            controller: _phoneController,
+            icon: Icons.phone,
+            label: tr(isTagalog, 'Phone Number', 'Numero ng Telepono'),
+            hint: '+63 917 000 0000',
+            keyboardType: TextInputType.phone,
+            validator: (value) {
+              if (value == null || value.trim().isEmpty) {
+                return tr(
+                  isTagalog,
+                  'Phone number is required',
+                  'Kailangan ang numero ng telepono',
+                );
+              }
+              return null;
+            },
+          ),
+          SizedBox(height: 2.h),
+          DropdownButtonFormField<String>(
+            initialValue: _relationship,
+            icon: const Icon(Icons.expand_more),
+            decoration: _fieldDecoration(
+              theme,
+              icon: Icons.favorite,
+              label: tr(isTagalog, 'Relationship', 'Relasyon sa Contact'),
+            ),
+            borderRadius: BorderRadius.circular(14),
+            style: GoogleFonts.nunitoSans(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurface,
+            ),
+            items: _relationships
+                .map(
+                  (relationship) => DropdownMenuItem(
+                    value: relationship,
+                    child: Text(relationship),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) {
+              if (value != null) {
+                setState(() => _relationship = value);
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTextField(
+    ThemeData theme, {
+    required TextEditingController controller,
+    required IconData icon,
+    required String label,
+    required String hint,
+    required String? Function(String?) validator,
+    TextInputType keyboardType = TextInputType.text,
+  }) {
+    return TextFormField(
+      controller: controller,
+      keyboardType: keyboardType,
+      validator: validator,
+      textInputAction: keyboardType == TextInputType.phone
+          ? TextInputAction.done
+          : TextInputAction.next,
+      style: GoogleFonts.nunitoSans(
+        fontSize: 16,
+        fontWeight: FontWeight.w600,
+        color: theme.colorScheme.onSurface,
+      ),
+      decoration: _fieldDecoration(theme, icon: icon, label: label, hint: hint),
+    );
+  }
+
+  InputDecoration _fieldDecoration(
+    ThemeData theme, {
+    required IconData icon,
+    required String label,
+    String? hint,
+  }) {
+    return InputDecoration(
+      prefixIcon: Icon(icon, color: AppTheme.primaryBlue),
+      labelText: label,
+      hintText: hint,
+      labelStyle: GoogleFonts.nunitoSans(
+        fontWeight: FontWeight.w700,
+        color: theme.colorScheme.onSurfaceVariant,
+      ),
+      hintStyle: GoogleFonts.nunitoSans(
+        color: theme.colorScheme.onSurfaceVariant.withAlpha(170),
+      ),
+      filled: true,
+      fillColor: theme.colorScheme.surfaceContainerHighest.withAlpha(120),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: theme.colorScheme.outlineVariant),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: theme.colorScheme.outlineVariant),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: AppTheme.primaryBlue, width: 2),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: AppTheme.errorRed),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: AppTheme.errorRed, width: 2),
+      ),
+    );
+  }
+
+  void _saveContact() {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    Navigator.pop(context, {
+      'name': _nameController.text.trim(),
+      'relationship': _relationship,
+      'phone': _phoneController.text.trim(),
+      'avatarUrl':
+          'https://images.pexels.com/photos/1181519/pexels-photo-1181519.jpeg',
+    });
   }
 }

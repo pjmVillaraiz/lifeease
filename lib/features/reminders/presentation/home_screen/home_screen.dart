@@ -9,6 +9,7 @@ import 'package:lifeease/shared/widgets/empty_state_widget.dart';
 import 'package:lifeease/shared/widgets/loading_skeleton_widget.dart';
 
 import 'package:lifeease/core/services/backend/reminder_repository.dart';
+import 'package:lifeease/features/reminders/presentation/add_reminder_screen/add_reminder_screen.dart';
 import 'package:lifeease/features/voice/application/speech_processing_module.dart';
 import 'package:lifeease/features/voice/application/voice_command_processing_module.dart';
 
@@ -192,6 +193,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     HapticFeedback.mediumImpact();
   }
 
+  Future<void> _editReminder(ReminderModel reminder) async {
+    final updated = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AddReminderScreen(editReminder: reminder.toMap()),
+      ),
+    );
+
+    if (updated == true) {
+      await _loadReminders();
+    }
+  }
+
   Future<void> _onSpeakCommand() async {
     HapticFeedback.heavyImpact();
     setState(() => _isListening = true);
@@ -224,14 +238,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void _onNavTap(int index) {
     if (index == _currentNavIndex) return;
     setState(() => _currentNavIndex = index);
-    
+
     // Bottom Navigation Map
     // 0: Home
     // 1: Reminders
     // 2: Voice
     // 3: Translate
     // 4: Settings
-    if (index == 4) {
+    if (index == 1) {
+      Navigator.pushNamed(context, AppRoutes.allRemindersScreen).then((_) {
+        setState(() => _currentNavIndex = 0);
+        _loadReminders();
+      });
+    } else if (index == 4) {
       Navigator.pushNamed(context, AppRoutes.settingsScreen).then((_) {
         setState(() => _currentNavIndex = 0);
       });
@@ -255,8 +274,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 slivers: [
                   SliverToBoxAdapter(child: _buildHeader(theme, isTagalog)),
                   SliverToBoxAdapter(child: _buildTopAction(theme, isTagalog)),
-                  SliverToBoxAdapter(child: _buildStatusCards(theme, isTagalog)),
-                  SliverToBoxAdapter(child: _buildSectionTitle(theme, isTagalog)),
+                  SliverToBoxAdapter(
+                    child: _buildStatusCards(theme, isTagalog),
+                  ),
+                  SliverToBoxAdapter(
+                    child: _buildSectionTitle(theme, isTagalog),
+                  ),
                   _buildReminderList(theme),
                   const SliverToBoxAdapter(child: SizedBox(height: 100)),
                 ],
@@ -283,8 +306,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final greeting = now.hour < 12
         ? tr(isTagalog, 'Good Morning', 'Magandang Umaga')
         : now.hour < 17
-            ? tr(isTagalog, 'Good Afternoon', 'Magandang Hapon')
-            : tr(isTagalog, 'Good Evening', 'Magandang Gabi');
+        ? tr(isTagalog, 'Good Afternoon', 'Magandang Hapon')
+        : tr(isTagalog, 'Good Evening', 'Magandang Gabi');
 
     final dateStr = DateFormat('EEEE, MMM d').format(now);
 
@@ -341,12 +364,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       child: ElevatedButton(
-        onPressed: () => Navigator.pushNamed(context, AppRoutes.addReminderScreen),
+        onPressed: () =>
+            Navigator.pushNamed(context, AppRoutes.addReminderScreen),
         style: ElevatedButton.styleFrom(
           backgroundColor: theme.colorScheme.primary,
           foregroundColor: theme.colorScheme.onPrimary,
           padding: const EdgeInsets.symmetric(vertical: 20),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           elevation: 2,
         ),
         child: Row(
@@ -368,10 +394,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildStatusCards(ThemeData theme, bool isTagalog) {
-    final pendingCount = _reminders.where((r) => !r.isCompleted).length;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final pendingCount = _reminders
+        .where((r) => !r.isCompleted && r.scheduledTimeMillis >= now)
+        .length;
     final completedCount = _reminders.where((r) => r.isCompleted).length;
-    // Mock values for missed and cancelled as they are not explicitly tracked in DB yet
-    final missedCount = 0;
+    final missedCount = _reminders
+        .where((r) => !r.isCompleted && r.scheduledTimeMillis < now)
+        .length;
     final cancelledCount = 0;
 
     return Padding(
@@ -434,8 +464,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildStatusCard(ThemeData theme,
-      {required String title, required int count, required IconData icon, required Color color, required Color iconColor}) {
+  Widget _buildStatusCard(
+    ThemeData theme, {
+    required String title,
+    required int count,
+    required IconData icon,
+    required Color color,
+    required Color iconColor,
+  }) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -448,7 +484,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           Icon(icon, color: iconColor, size: 32),
           const SizedBox(height: 12),
           Text(
-            '\$count',
+            count.toString(),
             style: GoogleFonts.nunitoSans(
               fontSize: 28,
               fontWeight: FontWeight.bold,
@@ -471,13 +507,30 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildSectionTitle(ThemeData theme, bool isTagalog) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-      child: Text(
-        tr(isTagalog, 'Upcoming Reminders', 'Mga Paparating na Paalala'),
-        style: GoogleFonts.nunitoSans(
-          fontSize: 22,
-          fontWeight: FontWeight.bold,
-          color: theme.colorScheme.onSurface,
-        ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              tr(isTagalog, 'Upcoming Reminders', 'Mga Paparating na Paalala'),
+              style: GoogleFonts.nunitoSans(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.pushNamed(context, AppRoutes.allRemindersScreen),
+            child: Text(
+              tr(isTagalog, 'View All', 'Tingnan Lahat'),
+              style: GoogleFonts.nunitoSans(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -487,7 +540,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return const SliverToBoxAdapter(child: ReminderListSkeleton());
     }
 
-    final pending = _reminders.where((r) => !r.isCompleted).toList();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final pending = _reminders
+        .where((r) => !r.isCompleted && r.scheduledTimeMillis >= now)
+        .toList();
 
     if (pending.isEmpty) {
       return SliverFillRemaining(
@@ -497,7 +553,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           title: 'No upcoming reminders',
           description: "Tap '+ Add Reminder' to create a new task.",
           ctaLabel: 'Add Reminder',
-          onCtaTap: () => Navigator.pushNamed(context, AppRoutes.addReminderScreen),
+          onCtaTap: () =>
+              Navigator.pushNamed(context, AppRoutes.addReminderScreen),
         ),
       );
     }
@@ -505,21 +562,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       sliver: SliverList(
-        delegate: SliverChildBuilderDelegate(
-          (ctx, i) {
-            final r = pending[i];
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: ReminderCardWidget(
-                reminder: r,
-                onDelete: () => _deleteReminder(r),
-                onMarkComplete: () => _markComplete(r),
-                onTap: () => Navigator.pushNamed(context, AppRoutes.addReminderScreen),
-              ),
-            );
-          },
-          childCount: pending.length,
-        ),
+        delegate: SliverChildBuilderDelegate((ctx, i) {
+          final r = pending[i];
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: ReminderCardWidget(
+              reminder: r,
+              onDelete: () => _deleteReminder(r),
+              onMarkComplete: () => _markComplete(r),
+              onTap: () => _editReminder(r),
+            ),
+          );
+        }, childCount: pending.length),
       ),
     );
   }

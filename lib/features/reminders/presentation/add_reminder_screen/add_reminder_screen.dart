@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/services.dart';
 
 import 'package:lifeease/core/services/backend/reminder_repository.dart';
@@ -13,12 +15,14 @@ class AddReminderScreen extends StatefulWidget {
   final int? prefillHour;
   final String? prefillTitle;
   final TimeOfDay? prefillTime;
+  final Map<String, dynamic>? editReminder;
 
   const AddReminderScreen({
     super.key,
     this.prefillHour,
     this.prefillTitle,
     this.prefillTime,
+    this.editReminder,
   });
 
   @override
@@ -37,12 +41,15 @@ class _AddReminderScreenState extends State<AddReminderScreen>
   bool _isRepeating = false;
   int _repeatIntervalMinutes = 60;
   bool _isSaving = false;
+  bool _hasChangedSchedule = false;
   final ReminderRepository _reminderRepository = ReminderRepository();
   final RuleBasedSchedulingEngine _schedulingEngine =
       RuleBasedSchedulingEngine();
 
   String? _titleError;
   String? _timeError;
+
+  bool get _isEditing => widget.editReminder != null;
 
   late AnimationController _entranceController;
   late Animation<double> _formFade;
@@ -69,14 +76,35 @@ class _AddReminderScreenState extends State<AddReminderScreen>
   void initState() {
     super.initState();
 
-    _selectedDate = DateTime.now();
-    _selectedTime =
-        widget.prefillTime ??
-        (widget.prefillHour != null
-            ? TimeOfDay(hour: widget.prefillHour!, minute: 0)
-            : TimeOfDay(hour: (TimeOfDay.now().hour + 1) % 24, minute: 0));
+    final editReminder = widget.editReminder;
+    final editScheduled = _dateTimeFromValue(
+      editReminder?['reminder_time'] ?? editReminder?['scheduledTimeMillis'],
+    );
 
-    if (widget.prefillTitle != null) {
+    _selectedDate = editScheduled ?? DateTime.now();
+    _selectedTime = editScheduled != null
+        ? TimeOfDay.fromDateTime(editScheduled)
+        : widget.prefillTime ??
+              (widget.prefillHour != null
+                  ? TimeOfDay(hour: widget.prefillHour!, minute: 0)
+                  : TimeOfDay(
+                      hour: (TimeOfDay.now().hour + 1) % 24,
+                      minute: 0,
+                    ));
+
+    if (editReminder != null) {
+      _titleController.text = editReminder['title']?.toString() ?? '';
+      _descriptionController.text =
+          editReminder['description']?.toString() ?? '';
+      _selectedCategory = editReminder['category']?.toString() ?? 'general';
+      _isRepeating =
+          editReminder['isRepeating'] as bool? ??
+          editReminder['is_repeating'] as bool? ??
+          editReminder['repeat_type']?.toString() != 'none';
+      _repeatIntervalMinutes =
+          editReminder['repeatIntervalMinutes'] as int? ??
+          _repeatMinutesFromType(editReminder['repeat_type']?.toString());
+    } else if (widget.prefillTitle != null) {
       _titleController.text = widget.prefillTitle!;
     }
 
@@ -128,7 +156,7 @@ class _AddReminderScreenState extends State<AddReminderScreen>
       setState(() => _titleError = 'Please enter a reminder title');
       valid = false;
     }
-    if (_isTimeInPast()) {
+    if ((!_isEditing || _hasChangedSchedule) && _isTimeInPast()) {
       setState(() => _timeError = 'Scheduled time cannot be in the past');
       valid = false;
     }
@@ -160,10 +188,18 @@ class _AddReminderScreenState extends State<AddReminderScreen>
 
     setState(() => _isSaving = true);
     HapticFeedback.mediumImpact();
-    final localId = DateTime.now().millisecondsSinceEpoch.toString();
+    final now = DateTime.now();
+    final existing = widget.editReminder;
+    final reminderId = existing?['id']?.toString() ?? _uuidV4();
+    final createdAt =
+        existing?['created_at']?.toString() ?? now.toIso8601String();
+    final isCompleted =
+        existing?['isCompleted'] as bool? ??
+        existing?['is_completed'] as bool? ??
+        false;
 
     await _reminderRepository.saveReminder({
-      'id': localId,
+      'id': reminderId,
       'title': _titleController.text.trim(),
       'description': _descriptionController.text.trim(),
       'reminder_time': decision.scheduledAt.toIso8601String(),
@@ -173,10 +209,11 @@ class _AddReminderScreenState extends State<AddReminderScreen>
       'isRepeating': _isRepeating,
       'repeatIntervalMinutes': _isRepeating ? _repeatIntervalMinutes : 0,
       'priority': decision.priority.name,
-      'is_completed': false,
-      'isCompleted': false,
+      'is_completed': isCompleted,
+      'isCompleted': isCompleted,
       'sync_status': 'queued',
-      'created_at': DateTime.now().toIso8601String(),
+      'created_at': createdAt,
+      'updated_at': now.toIso8601String(),
     });
 
     if (!mounted) return;
@@ -194,8 +231,10 @@ class _AddReminderScreenState extends State<AddReminderScreen>
             const SizedBox(width: 10),
             Text(
               decision.softWarnings.isEmpty
-                  ? 'Reminder saved'
-                  : 'Reminder saved with scheduling suggestion',
+                  ? (_isEditing ? 'Reminder updated' : 'Reminder saved')
+                  : (_isEditing
+                        ? 'Reminder updated with scheduling suggestion'
+                        : 'Reminder saved with scheduling suggestion'),
               style: GoogleFonts.nunitoSans(
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
@@ -211,11 +250,15 @@ class _AddReminderScreenState extends State<AddReminderScreen>
       ),
     );
 
-    Navigator.pushNamedAndRemoveUntil(
-      context,
-      AppRoutes.homeScreen,
-      (route) => false,
-    );
+    if (_isEditing) {
+      Navigator.pop(context, true);
+    } else {
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        AppRoutes.homeScreen,
+        (route) => false,
+      );
+    }
   }
 
   String _repeatTypeFromMinutes() {
@@ -223,6 +266,47 @@ class _AddReminderScreenState extends State<AddReminderScreen>
     if (_repeatIntervalMinutes >= 10080) return 'weekly';
     if (_repeatIntervalMinutes >= 1440) return 'daily';
     return 'custom';
+  }
+
+  int _repeatMinutesFromType(String? repeatType) {
+    switch (repeatType) {
+      case 'daily':
+        return 1440;
+      case 'weekly':
+        return 10080;
+      case 'monthly':
+        return 43200;
+      default:
+        return 0;
+    }
+  }
+
+  DateTime? _dateTimeFromValue(Object? value) {
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    if (value is DateTime) return value;
+    if (value is String) {
+      final parsed = DateTime.tryParse(value);
+      if (parsed != null) return parsed;
+
+      final millis = int.tryParse(value);
+      if (millis != null) return DateTime.fromMillisecondsSinceEpoch(millis);
+    }
+    return null;
+  }
+
+  String _uuidV4() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    String byteToHex(int byte) => byte.toRadixString(16).padLeft(2, '0');
+    final hex = bytes.map(byteToHex).join();
+    return '${hex.substring(0, 8)}-'
+        '${hex.substring(8, 12)}-'
+        '${hex.substring(12, 16)}-'
+        '${hex.substring(16, 20)}-'
+        '${hex.substring(20)}';
   }
 
   Future<void> _pickDate() async {
@@ -244,6 +328,7 @@ class _AddReminderScreenState extends State<AddReminderScreen>
     if (picked != null) {
       setState(() {
         _selectedDate = picked;
+        _hasChangedSchedule = true;
         if (_timeError != null && !_isTimeInPast()) _timeError = null;
       });
     }
@@ -265,6 +350,7 @@ class _AddReminderScreenState extends State<AddReminderScreen>
     if (picked != null) {
       setState(() {
         _selectedTime = picked;
+        _hasChangedSchedule = true;
         if (_timeError != null && !_isTimeInPast()) _timeError = null;
       });
     }
@@ -314,7 +400,7 @@ class _AddReminderScreenState extends State<AddReminderScreen>
         tooltip: 'Cancel',
       ),
       title: Text(
-        'Add Reminder',
+        _isEditing ? 'Edit Reminder' : 'Add Reminder',
         style: GoogleFonts.nunitoSans(
           fontSize: 22,
           fontWeight: FontWeight.w700,
@@ -583,7 +669,7 @@ class _AddReminderScreenState extends State<AddReminderScreen>
                   ),
                   const SizedBox(width: 10),
                   Text(
-                    'Save Reminder',
+                    _isEditing ? 'Update Reminder' : 'Save Reminder',
                     style: GoogleFonts.nunitoSans(
                       fontSize: 20,
                       fontWeight: FontWeight.w800,

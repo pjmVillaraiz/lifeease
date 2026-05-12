@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
+import 'package:lifeease/core/services/tts/tts_language_service.dart';
+
 import 'inworld_tts_service.dart';
 import 'whisper_api_service.dart';
 
@@ -21,6 +23,7 @@ class SpeechProcessingModule {
     final available = await _speech.initialize();
     await _tts.setSpeechRate(0.48);
     await _tts.setPitch(1.0);
+    await TtsLanguageService.applyCurrentLanguage(_tts);
     _isReady = available;
     return available;
   }
@@ -83,6 +86,7 @@ class SpeechProcessingModule {
     await initialize();
     await _tts.setSpeechRate(speed);
     await _tts.setVolume(volume);
+    await TtsLanguageService.applyCurrentLanguage(_tts);
     await _tts.stop();
     await _tts.speak(text);
   }

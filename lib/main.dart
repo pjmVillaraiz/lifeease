@@ -1,40 +1,188 @@
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 
 import 'package:lifeease/core/utils/app_export.dart';
 import 'package:lifeease/core/constants/env_config.dart';
 import 'package:lifeease/shared/providers/language_controller.dart';
 import 'package:lifeease/shared/providers/settings_controller.dart';
+import 'package:lifeease/core/services/backend/reminder_repository.dart';
+import 'package:lifeease/core/services/notifications/reminder_notification_service.dart';
 import 'package:lifeease/core/services/supabase_config.dart';
 import 'package:lifeease/shared/widgets/custom_error_widget.dart';
 
 void main() async {
+  // 1. Initialize Flutter bindings immediately
   WidgetsFlutterBinding.ensureInitialized();
 
+  // 2. Set up global error handling for build-time errors
+  _setupErrorHandling();
+
+  // 3. Render immediately, then bootstrap the app asynchronously.
+  runApp(const StartupApp());
+}
+
+void _setupErrorHandling() {
   bool hasShownError = false;
 
-  // 🚨 CRITICAL: Custom error handling - DO NOT REMOVE
   ErrorWidget.builder = (FlutterErrorDetails details) {
     if (!hasShownError) {
       hasShownError = true;
 
-      // Reset flag after 3 seconds to allow error widget on new screens
-      Future.delayed(Duration(seconds: 5), () {
+      // Reset flag after 5 seconds
+      Future.delayed(const Duration(seconds: 5), () {
         hasShownError = false;
       });
 
-      return CustomErrorWidget(errorDetails: details);
+      try {
+        return CustomErrorWidget(errorDetails: details);
+      } catch (e) {
+        // Ultimate fallback if CustomErrorWidget itself fails
+        return MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: Text(
+                'A build error occurred:\n${details.exception}',
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        );
+      }
     }
-    return SizedBox.shrink();
+    return MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Text(
+              'A build error occurred:\n${details.exception}',
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      ),
+    );
   };
+}
 
-  // 🚨 CRITICAL: Device orientation lock - DO NOT REMOVE
-  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-  await EnvConfig.load();
-  await SupabaseConfig.initialize();
+Future<void> _bootstrapNotifications() async {
+  try {
+    await ReminderNotificationService.instance.initialize();
+    final reminders = await ReminderRepository().loadReminders();
+    await ReminderNotificationService.instance.schedulePendingReminders(
+      reminders,
+    );
+  } catch (error) {
+    // Notifications should never prevent the app UI from loading.
+    debugPrint('Notification startup skipped: $error');
+  }
+}
 
-  final settingsController = await SettingsController.load();
+class StartupApp extends StatefulWidget {
+  const StartupApp({super.key});
 
-  runApp(MyApp(settingsController: settingsController));
+  @override
+  State<StartupApp> createState() => _StartupAppState();
+}
+
+class _StartupAppState extends State<StartupApp> {
+  SettingsController? _settingsController;
+  Object? _startupError;
+  bool _initializing = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeApp();
+  }
+
+  Future<void> _initializeApp() async {
+    try {
+      await EnvConfig.load().timeout(const Duration(seconds: 10));
+
+      await Future.wait([
+        SupabaseConfig.initialize(),
+        SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
+        if (defaultTargetPlatform == TargetPlatform.android)
+          AndroidAlarmManager.initialize(),
+      ]).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          debugPrint('⚠️ Some initializations timed out, continuing...');
+          return [];
+        },
+      );
+
+      final settingsController = await SettingsController.load();
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _settingsController = settingsController;
+        _initializing = false;
+      });
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _bootstrapNotifications();
+      });
+    } catch (error, stack) {
+      debugPrint('🚨 CRITICAL STARTUP ERROR: $error');
+      debugPrint(stack.toString());
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _startupError = error;
+        _initializing = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_startupError != null) {
+      return MaterialApp(
+        debugShowCheckedModeBanner: false,
+        home: Scaffold(
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Text(
+                'Failed to start LifeEase.\n\nDetails: $_startupError',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.red, fontSize: 16),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (_initializing || _settingsController == null) {
+      return const MaterialApp(
+        debugShowCheckedModeBanner: false,
+        home: Scaffold(
+          body: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Starting LifeEase...'),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return MyApp(settingsController: _settingsController!);
+  }
 }
 
 class MyApp extends StatelessWidget {
@@ -62,18 +210,20 @@ class MyApp extends StatelessWidget {
                       ? AppTheme.highContrastDarkTheme
                       : AppTheme.darkTheme,
                   themeMode: settingsController.themeMode,
-                  // 🚨 CRITICAL: NEVER REMOVE OR MODIFY
-                  builder: (context, child) {
+                  // 🚨 CRITICAL: MediaQuery override for text scaling
+                  builder: (context, widget) {
                     return MediaQuery(
                       data: MediaQuery.of(context).copyWith(
                         textScaler: TextScaler.linear(
                           settingsController.textScaleFactor,
                         ),
                       ),
-                      child: child!,
+                      // Provide a visible fallback if child is null
+                      child:
+                          widget ??
+                          const Center(child: CircularProgressIndicator()),
                     );
                   },
-                  // 🚨 END CRITICAL SECTION
                   debugShowCheckedModeBanner: false,
                   routes: AppRoutes.routes,
                   initialRoute: AppRoutes.initial,

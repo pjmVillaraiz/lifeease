@@ -65,9 +65,11 @@ class ReminderRepository {
       ...reminder,
       'is_completed': true,
       'isCompleted': true,
+      'is_canceled': false,
+      'isCanceled': false,
       'sync_status': 'queued',
     };
-    await _offline.updateReminder(id, updated);
+    await _offline.saveReminder(updated);
 
     final client = _client;
     if (client == null || id.length != 36) return;
@@ -77,8 +79,55 @@ class ReminderRepository {
           .update({'is_completed': true, 'sync_status': 'synced'})
           .eq('id', id);
     } catch (_) {
-      await _offline.updateReminder(id, updated);
+      await _offline.saveReminder(updated);
     }
+  }
+
+  Future<void> markReminderCompleteById(String id) async {
+    final reminders = await loadReminders();
+    final existing = reminders.cast<Map<String, dynamic>?>().firstWhere(
+      (reminder) => reminder?['id']?.toString() == id,
+      orElse: () => null,
+    );
+
+    await markReminderComplete(existing ?? {'id': id});
+  }
+
+  Future<void> markReminderCanceled(Map<String, dynamic> reminder) async {
+    final id = reminder['id']?.toString();
+    if (id == null) return;
+
+    final updated = {
+      ...reminder,
+      'is_completed': false,
+      'isCompleted': false,
+      'is_canceled': true,
+      'isCanceled': true,
+      'sync_status': 'canceled',
+      'canceled_at': DateTime.now().toIso8601String(),
+    };
+    await _offline.saveReminder(updated);
+
+    final client = _client;
+    if (client == null || id.length != 36) return;
+    try {
+      await client
+          .from('reminders')
+          .update({'sync_status': 'canceled'})
+          .eq('id', id);
+    } catch (_) {
+      await _offline.saveReminder(updated);
+    }
+  }
+
+  Future<void> markReminderCanceledById(String id) async {
+    final reminders = await loadReminders();
+    final existing = reminders.cast<Map<String, dynamic>?>().firstWhere(
+      (reminder) => reminder?['id']?.toString() == id,
+      orElse: () => null,
+    );
+
+    await markReminderCanceled(existing ?? {'id': id});
   }
 
   Stream<List<Map<String, dynamic>>> watchReminders() {
@@ -117,7 +166,10 @@ class ReminderRepository {
             .upsert(
               _remoteReminder({...reminder, 'sync_status': 'synced'}, client),
             );
-        await _offline.updateReminder(reminder['id'].toString(), {...reminder, 'sync_status': 'synced'});
+        await _offline.updateReminder(reminder['id'].toString(), {
+          ...reminder,
+          'sync_status': 'synced',
+        });
       } catch (e) {
         // Skip on individual failure to prevent loop halt
       }

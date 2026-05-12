@@ -9,6 +9,8 @@ import 'package:lifeease/shared/widgets/empty_state_widget.dart';
 import 'package:lifeease/shared/widgets/loading_skeleton_widget.dart';
 
 import 'package:lifeease/core/services/backend/reminder_repository.dart';
+import 'package:lifeease/core/services/notifications/reminder_notification_service.dart';
+import 'package:lifeease/core/services/tts/tts_language_service.dart';
 import 'package:lifeease/features/reminders/presentation/add_reminder_screen/add_reminder_screen.dart';
 import 'package:lifeease/features/voice/application/speech_processing_module.dart';
 import 'package:lifeease/features/voice/application/voice_command_processing_module.dart';
@@ -21,6 +23,7 @@ class ReminderModel {
   final String description;
   final int scheduledTimeMillis;
   final bool isCompleted;
+  final bool isCanceled;
   final bool isRepeating;
   final int repeatIntervalMinutes;
   final String category;
@@ -34,6 +37,7 @@ class ReminderModel {
     required this.description,
     required this.scheduledTimeMillis,
     required this.isCompleted,
+    required this.isCanceled,
     required this.isRepeating,
     required this.repeatIntervalMinutes,
     required this.category,
@@ -48,11 +52,15 @@ class ReminderModel {
 
     return ReminderModel(
       id: map['id']?.toString() ?? DateTime.now().toIso8601String(),
-      title: map['title']?.toString() ?? 'Reminder',
+      title: map['title']?.toString() ?? TtsLanguageService.reminderLabel(),
       description: map['description']?.toString() ?? '',
       scheduledTimeMillis: _millisFromValue(scheduledAt),
       isCompleted:
           map['isCompleted'] as bool? ?? map['is_completed'] as bool? ?? false,
+      isCanceled:
+          map['isCanceled'] as bool? ??
+          map['is_canceled'] as bool? ??
+          map['sync_status'] == 'canceled',
       isRepeating:
           map['isRepeating'] as bool? ??
           ((map['repeat_type']?.toString() ?? '').isNotEmpty &&
@@ -73,6 +81,8 @@ class ReminderModel {
     'description': description,
     'scheduledTimeMillis': scheduledTimeMillis,
     'isCompleted': isCompleted,
+    'isCanceled': isCanceled,
+    'is_canceled': isCanceled,
     'isRepeating': isRepeating,
     'repeatIntervalMinutes': repeatIntervalMinutes,
     'category': category,
@@ -93,6 +103,13 @@ class ReminderModel {
   }
 
   static int _repeatMinutesFromType(String? repeatType) {
+    final customMatch = RegExp(
+      r'^custom:(\d+)$',
+    ).firstMatch(repeatType?.toLowerCase() ?? '');
+    if (customMatch != null) {
+      return int.tryParse(customMatch.group(1)!) ?? 0;
+    }
+
     switch (repeatType) {
       case 'daily':
         return 1440;
@@ -185,11 +202,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Future<void> _deleteReminder(ReminderModel reminder) async {
     setState(() => _reminders.removeWhere((r) => r.id == reminder.id));
     await _reminderRepository.deleteReminder(reminder.id);
+    await ReminderNotificationService.instance.cancelReminder(reminder.id);
   }
 
   Future<void> _markComplete(ReminderModel reminder) async {
     setState(() => _reminders.removeWhere((r) => r.id == reminder.id));
     await _reminderRepository.markReminderComplete(reminder.toMap());
+    await ReminderNotificationService.instance.cancelReminder(reminder.id);
     HapticFeedback.mediumImpact();
   }
 
@@ -396,13 +415,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildStatusCards(ThemeData theme, bool isTagalog) {
     final now = DateTime.now().millisecondsSinceEpoch;
     final pendingCount = _reminders
-        .where((r) => !r.isCompleted && r.scheduledTimeMillis >= now)
+        .where(
+          (r) =>
+              !r.isCompleted && !r.isCanceled && r.scheduledTimeMillis >= now,
+        )
         .length;
     final completedCount = _reminders.where((r) => r.isCompleted).length;
     final missedCount = _reminders
-        .where((r) => !r.isCompleted && r.scheduledTimeMillis < now)
+        .where(
+          (r) => !r.isCompleted && !r.isCanceled && r.scheduledTimeMillis < now,
+        )
         .length;
-    final cancelledCount = 0;
+    final cancelledCount = _reminders.where((r) => r.isCanceled).length;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -542,7 +566,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     final now = DateTime.now().millisecondsSinceEpoch;
     final pending = _reminders
-        .where((r) => !r.isCompleted && r.scheduledTimeMillis >= now)
+        .where(
+          (r) =>
+              !r.isCompleted && !r.isCanceled && r.scheduledTimeMillis >= now,
+        )
         .toList();
 
     if (pending.isEmpty) {
@@ -551,8 +578,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         child: EmptyStateWidget(
           iconName: 'alarm',
           title: 'No upcoming reminders',
-          description: "Tap '+ Add Reminder' to create a new task.",
-          ctaLabel: 'Add Reminder',
+          description: tr(
+            LanguageController.isTagalog.value,
+            "Tap '+ Add Reminder' to create a new task.",
+            "I-tap ang '+ Magdagdag ng Paalala' para gumawa ng bagong gawain.",
+          ),
+          ctaLabel: tr(
+            LanguageController.isTagalog.value,
+            'Add Reminder',
+            'Magdagdag ng Paalala',
+          ),
           onCtaTap: () =>
               Navigator.pushNamed(context, AppRoutes.addReminderScreen),
         ),

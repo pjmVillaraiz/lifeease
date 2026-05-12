@@ -2,7 +2,9 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import 'package:lifeease/core/services/backend/reminder_repository.dart';
+import 'package:lifeease/core/services/notifications/reminder_notification_service.dart';
 import 'package:lifeease/core/services/supabase_config.dart';
+import 'package:lifeease/core/services/tts/tts_language_service.dart';
 import 'package:lifeease/core/utils/app_export.dart';
 import 'package:lifeease/features/reminders/presentation/add_reminder_screen/add_reminder_screen.dart';
 import 'package:lifeease/features/reminders/presentation/home_screen/home_screen.dart';
@@ -57,6 +59,7 @@ class _AllRemindersScreenState extends State<AllRemindersScreen> {
   Future<void> _deleteReminder(ReminderModel reminder) async {
     setState(() => _reminders.removeWhere((r) => r.id == reminder.id));
     await _reminderRepository.deleteReminder(reminder.id);
+    await ReminderNotificationService.instance.cancelReminder(reminder.id);
     HapticFeedback.mediumImpact();
   }
 
@@ -73,6 +76,7 @@ class _AllRemindersScreenState extends State<AllRemindersScreen> {
     });
 
     await _reminderRepository.markReminderComplete(updated);
+    await ReminderNotificationService.instance.cancelReminder(reminder.id);
     HapticFeedback.mediumImpact();
   }
 
@@ -91,6 +95,7 @@ class _AllRemindersScreenState extends State<AllRemindersScreen> {
 
   bool _isMissed(ReminderModel reminder) {
     return !reminder.isCompleted &&
+        !reminder.isCanceled &&
         reminder.scheduledTimeMillis < DateTime.now().millisecondsSinceEpoch;
   }
 
@@ -98,7 +103,7 @@ class _AllRemindersScreenState extends State<AllRemindersScreen> {
     switch (_filter) {
       case ReminderFilter.pending:
         return _reminders
-            .where((r) => !r.isCompleted && !_isMissed(r))
+            .where((r) => !r.isCompleted && !r.isCanceled && !_isMissed(r))
             .toList();
       case ReminderFilter.completed:
         return _reminders.where((r) => r.isCompleted).toList();
@@ -195,7 +200,9 @@ class _AllRemindersScreenState extends State<AllRemindersScreen> {
   }
 
   Widget _buildSummary(ThemeData theme, bool isTagalog) {
-    final pending = _reminders.where((r) => !r.isCompleted).length;
+    final pending = _reminders
+        .where((r) => !r.isCompleted && !r.isCanceled)
+        .length;
     final completed = _reminders.where((r) => r.isCompleted).length;
     final missed = _reminders.where(_isMissed).length;
 
@@ -372,7 +379,7 @@ class _AllRemindersScreenState extends State<AllRemindersScreen> {
             timeFormat: _timeFormat,
             onDelete: () => _deleteReminder(reminder),
             onEdit: () => _editReminder(reminder),
-            onMarkComplete: reminder.isCompleted
+            onMarkComplete: reminder.isCompleted || reminder.isCanceled
                 ? null
                 : () => _markComplete(reminder),
           );
@@ -411,12 +418,16 @@ class _ReminderListTile extends StatelessWidget {
     final scheduled = DateTime.fromMillisecondsSinceEpoch(
       reminder.scheduledTimeMillis,
     );
-    final accent = reminder.isCompleted
+    final accent = reminder.isCanceled
+        ? theme.colorScheme.outline
+        : reminder.isCompleted
         ? AppTheme.success
         : isMissed
         ? AppTheme.errorRed
         : AppTheme.primaryBlue;
-    final statusLabel = reminder.isCompleted
+    final statusLabel = reminder.isCanceled
+        ? TtsLanguageService.canceledLabel()
+        : reminder.isCompleted
         ? 'Completed'
         : isMissed
         ? 'Missed'
@@ -468,7 +479,8 @@ class _ReminderListTile extends StatelessWidget {
                     if (reminder.description.isNotEmpty) ...[
                       const SizedBox(height: 2),
                       Text(
-                        reminder.description,
+                        '${TtsLanguageService.descriptionLabel()}: '
+                        '${reminder.description}',
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: GoogleFonts.nunitoSans(

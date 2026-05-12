@@ -3,6 +3,8 @@ import 'dart:math';
 import 'package:flutter/services.dart';
 
 import 'package:lifeease/core/services/backend/reminder_repository.dart';
+import 'package:lifeease/core/services/notifications/reminder_notification_service.dart';
+import 'package:lifeease/core/services/tts/tts_language_service.dart';
 import 'package:lifeease/core/utils/app_export.dart';
 import 'package:lifeease/features/scheduling/domain/rule_based_scheduling_engine.dart';
 import 'package:lifeease/shared/widgets/emergency_fab_widget.dart';
@@ -145,6 +147,10 @@ class _AddReminderScreenState extends State<AddReminderScreen>
     return scheduled.isBefore(now);
   }
 
+  String get _reminderLabel => TtsLanguageService.reminderLabel();
+
+  String get _noteLabel => TtsLanguageService.descriptionLabel();
+
   Future<void> _saveReminder() async {
     setState(() {
       _titleError = null;
@@ -197,8 +203,12 @@ class _AddReminderScreenState extends State<AddReminderScreen>
         existing?['isCompleted'] as bool? ??
         existing?['is_completed'] as bool? ??
         false;
+    final isCanceled =
+        existing?['isCanceled'] as bool? ??
+        existing?['is_canceled'] as bool? ??
+        existing?['sync_status'] == 'canceled';
 
-    await _reminderRepository.saveReminder({
+    final savedReminder = {
       'id': reminderId,
       'title': _titleController.text.trim(),
       'description': _descriptionController.text.trim(),
@@ -211,10 +221,15 @@ class _AddReminderScreenState extends State<AddReminderScreen>
       'priority': decision.priority.name,
       'is_completed': isCompleted,
       'isCompleted': isCompleted,
-      'sync_status': 'queued',
+      'is_canceled': isCanceled,
+      'isCanceled': isCanceled,
+      'sync_status': isCanceled ? 'canceled' : 'queued',
       'created_at': createdAt,
       'updated_at': now.toIso8601String(),
-    });
+    };
+
+    await _reminderRepository.saveReminder(savedReminder);
+    await ReminderNotificationService.instance.scheduleReminder(savedReminder);
 
     if (!mounted) return;
     setState(() => _isSaving = false);
@@ -231,10 +246,12 @@ class _AddReminderScreenState extends State<AddReminderScreen>
             const SizedBox(width: 10),
             Text(
               decision.softWarnings.isEmpty
-                  ? (_isEditing ? 'Reminder updated' : 'Reminder saved')
+                  ? (_isEditing
+                        ? '$_reminderLabel updated'
+                        : '$_reminderLabel saved')
                   : (_isEditing
-                        ? 'Reminder updated with scheduling suggestion'
-                        : 'Reminder saved with scheduling suggestion'),
+                        ? '$_reminderLabel updated with scheduling suggestion'
+                        : '$_reminderLabel saved with scheduling suggestion'),
               style: GoogleFonts.nunitoSans(
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
@@ -265,10 +282,17 @@ class _AddReminderScreenState extends State<AddReminderScreen>
     if (_repeatIntervalMinutes >= 43200) return 'monthly';
     if (_repeatIntervalMinutes >= 10080) return 'weekly';
     if (_repeatIntervalMinutes >= 1440) return 'daily';
-    return 'custom';
+    return 'custom:$_repeatIntervalMinutes';
   }
 
   int _repeatMinutesFromType(String? repeatType) {
+    final customMatch = RegExp(
+      r'^custom:(\d+)$',
+    ).firstMatch(repeatType?.toLowerCase() ?? '');
+    if (customMatch != null) {
+      return int.tryParse(customMatch.group(1)!) ?? 0;
+    }
+
     switch (repeatType) {
       case 'daily':
         return 1440;
@@ -400,7 +424,7 @@ class _AddReminderScreenState extends State<AddReminderScreen>
         tooltip: 'Cancel',
       ),
       title: Text(
-        _isEditing ? 'Edit Reminder' : 'Add Reminder',
+        _isEditing ? 'Edit $_reminderLabel' : 'Add $_reminderLabel',
         style: GoogleFonts.nunitoSans(
           fontSize: 22,
           fontWeight: FontWeight.w700,
@@ -502,7 +526,7 @@ class _AddReminderScreenState extends State<AddReminderScreen>
 
   Widget _buildTitleSection(ThemeData theme) {
     return FormSectionCardWidget(
-      title: 'Reminder Title',
+      title: '$_reminderLabel Title',
       isRequired: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -547,7 +571,7 @@ class _AddReminderScreenState extends State<AddReminderScreen>
 
   Widget _buildDescriptionSection(ThemeData theme) {
     return FormSectionCardWidget(
-      title: 'Notes (Optional)',
+      title: '$_noteLabel (Optional)',
       child: TextFormField(
         controller: _descriptionController,
         maxLines: 3,
@@ -558,7 +582,7 @@ class _AddReminderScreenState extends State<AddReminderScreen>
           fontWeight: FontWeight.w400,
         ),
         decoration: InputDecoration(
-          hintText: 'Add additional details...',
+          hintText: 'Add a note...',
           alignLabelWithHint: true,
           prefixIcon: Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
@@ -669,7 +693,9 @@ class _AddReminderScreenState extends State<AddReminderScreen>
                   ),
                   const SizedBox(width: 10),
                   Text(
-                    _isEditing ? 'Update Reminder' : 'Save Reminder',
+                    _isEditing
+                        ? 'Update $_reminderLabel'
+                        : 'Save $_reminderLabel',
                     style: GoogleFonts.nunitoSans(
                       fontSize: 20,
                       fontWeight: FontWeight.w800,

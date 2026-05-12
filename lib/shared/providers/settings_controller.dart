@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'language_controller.dart';
+
 class SettingsController extends ChangeNotifier {
   static late SettingsController instance;
 
@@ -40,6 +42,7 @@ class SettingsController extends ChangeNotifier {
         prefs.getString(_reminderLeadTimeKey) ?? '15 minutes';
 
     SettingsController.instance = controller;
+    LanguageController.isTagalog.value = controller.tagalog;
     return controller;
   }
 
@@ -73,6 +76,7 @@ class SettingsController extends ChangeNotifier {
 
   void updateTagalog(bool enabled) {
     tagalog = enabled;
+    LanguageController.isTagalog.value = enabled;
     _saveBool(_tagalogKey, enabled);
     notifyListeners();
   }

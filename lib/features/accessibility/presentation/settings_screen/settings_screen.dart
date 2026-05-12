@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:sizer/sizer.dart';
 
+import 'package:lifeease/core/services/backend/reminder_repository.dart';
+import 'package:lifeease/core/services/notifications/reminder_notification_service.dart';
 import 'package:lifeease/shared/providers/language_controller.dart';
 import 'package:lifeease/shared/providers/settings_controller.dart';
 import 'package:lifeease/features/translation/application/language_translation_processing_module.dart';
@@ -32,6 +34,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   String tr(String en, String tl) {
     return LanguageController.isTagalog.value ? tl : en;
+  }
+
+  Future<void> _syncNotificationSchedule() async {
+    if (!_controller.notificationsEnabled) {
+      await ReminderNotificationService.instance.cancelAll();
+      return;
+    }
+
+    final reminders = await ReminderRepository().loadReminders();
+    await ReminderNotificationService.instance.schedulePendingReminders(
+      reminders,
+    );
   }
 
   @override
@@ -81,8 +95,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 'Tumatanggap ng mga paalala',
               ),
               value: _controller.notificationsEnabled,
-              onChanged: (v) {
+              onChanged: (v) async {
                 _controller.updateNotificationsEnabled(v);
+                await _syncNotificationSchedule();
                 setState(() {});
               },
             ),
@@ -98,8 +113,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               value: _controller.soundEnabled,
               onChanged: _controller.notificationsEnabled
-                  ? (v) {
+                  ? (v) async {
                       _controller.updateSoundEnabled(v);
+                      await _syncNotificationSchedule();
                       setState(() {});
                     }
                   : null,
@@ -116,8 +132,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               value: _controller.vibrationEnabled,
               onChanged: _controller.notificationsEnabled
-                  ? (v) {
+                  ? (v) async {
                       _controller.updateVibrationEnabled(v);
+                      await _syncNotificationSchedule();
                       setState(() {});
                     }
                   : null,
@@ -134,9 +151,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               value: _controller.reminderLeadTime,
               items: _leadTimeOptions,
-              onChanged: (v) {
+              onChanged: (v) async {
                 if (v != null) {
                   _controller.updateReminderLeadTime(v);
+                  await _syncNotificationSchedule();
                   setState(() {});
                 }
               },

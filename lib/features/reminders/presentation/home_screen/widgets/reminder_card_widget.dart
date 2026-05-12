@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lifeease/core/themes/app_theme.dart';
+import 'package:lifeease/core/services/tts/tts_language_service.dart';
 import 'package:lifeease/shared/widgets/custom_icon_widget.dart';
 import 'package:lifeease/shared/widgets/status_badge_widget.dart';
 import '../home_screen.dart';
@@ -46,7 +47,8 @@ class _ReminderCardWidgetState extends State<ReminderCardWidget>
   bool get _isOverdue {
     final now = DateTime.now().millisecondsSinceEpoch;
     return widget.reminder.scheduledTimeMillis < now &&
-        !widget.reminder.isCompleted;
+        !widget.reminder.isCompleted &&
+        !widget.reminder.isCanceled;
   }
 
   String _formatTime(int millis) {
@@ -85,7 +87,9 @@ class _ReminderCardWidgetState extends State<ReminderCardWidget>
   }
 
   BadgeStatus get _badgeStatus {
+    if (widget.reminder.isCanceled) return BadgeStatus.info;
     if (_isOverdue) return BadgeStatus.overdue;
+    if (widget.reminder.isCompleted) return BadgeStatus.completed;
     final minutesUntil =
         (widget.reminder.scheduledTimeMillis -
             DateTime.now().millisecondsSinceEpoch) ~/
@@ -95,6 +99,10 @@ class _ReminderCardWidgetState extends State<ReminderCardWidget>
   }
 
   String get _badgeLabel {
+    if (widget.reminder.isCanceled) return TtsLanguageService.canceledLabel();
+    if (widget.reminder.isCompleted) {
+      return TtsLanguageService.doneActionLabel();
+    }
     if (_isOverdue) return 'Overdue';
     final minutesUntil =
         (widget.reminder.scheduledTimeMillis -
@@ -142,7 +150,7 @@ class _ReminderCardWidgetState extends State<ReminderCardWidget>
                   ),
                 ),
                 title: Text(
-                  'Edit Reminder',
+                  'Edit ${TtsLanguageService.reminderLabel()}',
                   style: GoogleFonts.nunitoSans(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -167,7 +175,7 @@ class _ReminderCardWidgetState extends State<ReminderCardWidget>
                   ),
                 ),
                 title: Text(
-                  'Mark Complete',
+                  TtsLanguageService.doneActionLabel(),
                   style: GoogleFonts.nunitoSans(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -331,7 +339,8 @@ class _ReminderCardWidgetState extends State<ReminderCardWidget>
                         if (widget.reminder.description.isNotEmpty) ...[
                           const SizedBox(height: 2),
                           Text(
-                            widget.reminder.description,
+                            '${TtsLanguageService.descriptionLabel()}: '
+                            '${widget.reminder.description}',
                             style: GoogleFonts.nunitoSans(
                               fontSize: 13,
                               color: theme.colorScheme.outline,

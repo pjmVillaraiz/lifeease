@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:lifeease/core/services/tts/tts_language_service.dart';
 import 'package:lifeease/core/themes/app_theme.dart';
 import 'package:lifeease/shared/widgets/custom_icon_widget.dart';
 
@@ -25,6 +26,9 @@ class RepeatSettingsWidget extends StatelessWidget {
   });
 
   static const _intervals = [
+    _RepeatInterval(0, 'Every 30 seconds'),
+    _RepeatInterval(1, 'Every 1 minute'),
+    _RepeatInterval(5, 'Every 5 minutes'),
     _RepeatInterval(15, 'Every 15 minutes'),
     _RepeatInterval(30, 'Every 30 minutes'),
     _RepeatInterval(60, 'Every hour'),
@@ -63,7 +67,7 @@ class RepeatSettingsWidget extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Repeat Reminder',
+                    'Repeat ${TtsLanguageService.reminderLabel()}',
                     style: GoogleFonts.nunitoSans(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,

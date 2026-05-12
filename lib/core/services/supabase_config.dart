@@ -45,15 +45,19 @@ class SupabaseConfig {
 
       _initialized = true;
 
-      // Perform a robust connection test
-      await _testConnection();
+      // Perform a robust connection test with a short timeout
+      // If it fails or times out, we just continue in guest mode
+      await _testConnection().timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => throw Exception('Connection test timed out'),
+      );
     } catch (e) {
       if (kDebugMode) {
-        print('🚨 SUPABASE INITIALIZATION ERROR: \$e');
-      }
-      if (kDebugMode) {
+        print('🚨 SUPABASE INITIALIZATION ERROR: $e');
         print('Starting LifeEase in guest/offline mode.');
       }
+      // Note: _initialized remains true if Supabase.initialize succeeded
+      // but the connection test failed.
     }
   }
 

@@ -18,6 +18,7 @@ create table if not exists public.users (
 alter table public.users add column if not exists email text;
 alter table public.users add column if not exists first_name text;
 alter table public.users add column if not exists last_name text;
+alter table public.users add column if not exists display_name text;
 alter table public.users add column if not exists phone text;
 alter table public.users add column if not exists birthdate text;
 alter table public.users add column if not exists medical_conditions text;

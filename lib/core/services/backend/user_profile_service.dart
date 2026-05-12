@@ -57,19 +57,25 @@ class UserProfileService {
   Future<UserProfile> loadProfile() async {
     final prefs = await SharedPreferences.getInstance();
     final user = _authService.currentUser;
+    final isGuest = await _authService.isGuestSession;
+    final prefix = await _storagePrefix();
 
     var profile = UserProfile(
-      firstName: prefs.getString(firstNameKey),
-      lastName: prefs.getString(lastNameKey),
-      displayName: prefs.getString(nameKey),
-      email: prefs.getString(emailKey) ?? user?.email,
-      phone: prefs.getString(phoneKey),
-      birthdate: prefs.getString(birthdateKey),
-      medicalConditions: prefs.getString(conditionsKey),
+      firstName: _readString(prefs, prefix, firstNameKey),
+      lastName: _readString(prefs, prefix, lastNameKey),
+      displayName:
+          _readString(prefs, prefix, nameKey) ??
+          (isGuest ? 'Guest User' : null),
+      email:
+          _readString(prefs, prefix, emailKey) ??
+          (isGuest ? 'Guest Mode' : user?.email),
+      phone: _readString(prefs, prefix, phoneKey),
+      birthdate: _readString(prefs, prefix, birthdateKey),
+      medicalConditions: _readString(prefs, prefix, conditionsKey),
     );
 
     final client = SupabaseConfig.maybeClient;
-    if (client == null || user == null) return profile;
+    if (isGuest || client == null || user == null) return profile;
 
     try {
       final row = await client
@@ -82,13 +88,15 @@ class UserProfileService {
 
       if (row == null) return profile;
       profile = UserProfile(
-        firstName: row['first_name']?.toString(),
-        lastName: row['last_name']?.toString(),
-        displayName: row['display_name']?.toString(),
-        email: row['email']?.toString() ?? user.email,
-        phone: row['phone']?.toString(),
-        birthdate: row['birthdate']?.toString(),
-        medicalConditions: row['medical_conditions']?.toString(),
+        firstName: _remoteString(row['first_name']) ?? profile.firstName,
+        lastName: _remoteString(row['last_name']) ?? profile.lastName,
+        displayName: _remoteString(row['display_name']) ?? profile.displayName,
+        email: _remoteString(row['email']) ?? profile.email ?? user.email,
+        phone: _remoteString(row['phone']) ?? profile.phone,
+        birthdate: _remoteString(row['birthdate']) ?? profile.birthdate,
+        medicalConditions:
+            _remoteString(row['medical_conditions']) ??
+            profile.medicalConditions,
       );
       await saveProfile(profile, syncRemote: false);
     } catch (_) {
@@ -103,18 +111,37 @@ class UserProfileService {
     bool syncRemote = true,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(firstNameKey, profile.firstName?.trim() ?? '');
-    await prefs.setString(lastNameKey, profile.lastName?.trim() ?? '');
-    await prefs.setString(nameKey, profile.resolvedDisplayName ?? '');
-    await prefs.setString(emailKey, profile.email?.trim() ?? '');
-    await prefs.setString(phoneKey, profile.phone?.trim() ?? '');
-    await prefs.setString(birthdateKey, profile.birthdate?.trim() ?? '');
+    final prefix = await _storagePrefix();
     await prefs.setString(
-      conditionsKey,
+      _scopedKey(prefix, firstNameKey),
+      profile.firstName?.trim() ?? '',
+    );
+    await prefs.setString(
+      _scopedKey(prefix, lastNameKey),
+      profile.lastName?.trim() ?? '',
+    );
+    await prefs.setString(
+      _scopedKey(prefix, nameKey),
+      profile.resolvedDisplayName ?? '',
+    );
+    await prefs.setString(
+      _scopedKey(prefix, emailKey),
+      profile.email?.trim() ?? '',
+    );
+    await prefs.setString(
+      _scopedKey(prefix, phoneKey),
+      profile.phone?.trim() ?? '',
+    );
+    await prefs.setString(
+      _scopedKey(prefix, birthdateKey),
+      profile.birthdate?.trim() ?? '',
+    );
+    await prefs.setString(
+      _scopedKey(prefix, conditionsKey),
       profile.medicalConditions?.trim() ?? '',
     );
 
-    if (!syncRemote) return;
+    if (!syncRemote || await _authService.isGuestSession) return;
 
     final client = SupabaseConfig.maybeClient;
     final user = _authService.currentUser;
@@ -131,5 +158,24 @@ class UserProfileService {
       'medical_conditions': profile.medicalConditions?.trim(),
       'updated_at': DateTime.now().toIso8601String(),
     });
+  }
+
+  Future<String> _storagePrefix() async {
+    if (await _authService.isGuestSession) return 'guest';
+    return _authService.currentUser?.id ?? 'guest';
+  }
+
+  String _scopedKey(String prefix, String key) => 'profile.$prefix.$key';
+
+  String? _readString(SharedPreferences prefs, String prefix, String key) {
+    final value = prefs.getString(_scopedKey(prefix, key));
+    if (value == null || value.trim().isEmpty) return null;
+    return value;
+  }
+
+  String? _remoteString(Object? value) {
+    final text = value?.toString().trim();
+    if (text == null || text.isEmpty) return null;
+    return text;
   }
 }

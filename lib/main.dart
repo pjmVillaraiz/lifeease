@@ -7,6 +7,7 @@ import 'package:lifeease/core/constants/env_config.dart';
 import 'package:lifeease/shared/providers/language_controller.dart';
 import 'package:lifeease/shared/providers/settings_controller.dart';
 import 'package:lifeease/core/services/backend/reminder_repository.dart';
+import 'package:lifeease/core/services/backend/supabase_auth_service.dart';
 import 'package:lifeease/core/services/notifications/reminder_notification_service.dart';
 import 'package:lifeease/core/services/supabase_config.dart';
 import 'package:lifeease/shared/widgets/custom_error_widget.dart';
@@ -88,6 +89,7 @@ class StartupApp extends StatefulWidget {
 
 class _StartupAppState extends State<StartupApp> {
   SettingsController? _settingsController;
+  String _initialRoute = AppRoutes.loginScreen;
   Object? _startupError;
   bool _initializing = true;
 
@@ -115,6 +117,8 @@ class _StartupAppState extends State<StartupApp> {
       );
 
       final settingsController = await SettingsController.load();
+      final authService = SupabaseAuthService();
+      final shouldStartAtHome = await authService.shouldStartAtHome();
 
       if (!mounted) {
         return;
@@ -122,6 +126,9 @@ class _StartupAppState extends State<StartupApp> {
 
       setState(() {
         _settingsController = settingsController;
+        _initialRoute = shouldStartAtHome
+            ? AppRoutes.homeScreen
+            : AppRoutes.loginScreen;
         _initializing = false;
       });
 
@@ -181,14 +188,22 @@ class _StartupAppState extends State<StartupApp> {
       );
     }
 
-    return MyApp(settingsController: _settingsController!);
+    return MyApp(
+      settingsController: _settingsController!,
+      initialRoute: _initialRoute,
+    );
   }
 }
 
 class MyApp extends StatelessWidget {
   final SettingsController settingsController;
+  final String initialRoute;
 
-  const MyApp({super.key, required this.settingsController});
+  const MyApp({
+    super.key,
+    required this.settingsController,
+    required this.initialRoute,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -226,7 +241,7 @@ class MyApp extends StatelessWidget {
                   },
                   debugShowCheckedModeBanner: false,
                   routes: AppRoutes.routes,
-                  initialRoute: AppRoutes.initial,
+                  initialRoute: initialRoute,
                 );
               },
             );

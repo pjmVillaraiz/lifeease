@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:sizer/sizer.dart';
 
+import 'package:lifeease/core/services/backend/supabase_auth_service.dart';
+import 'package:lifeease/core/services/backend/user_profile_service.dart';
 import 'package:lifeease/core/themes/app_theme.dart';
+import 'package:lifeease/core/utils/app_routes.dart';
 import 'package:lifeease/shared/widgets/custom_icon_widget.dart';
 import 'package:lifeease/shared/widgets/custom_image_widget.dart';
 import 'package:lifeease/shared/providers/language_controller.dart';
@@ -15,6 +18,8 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  final SupabaseAuthService _authService = SupabaseAuthService();
+  final UserProfileService _profileService = UserProfileService();
   bool _isEditing = false;
   final List<Map<String, String>> _emergencyContacts = [
     {
@@ -52,6 +57,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   );
 
   @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  @override
   void dispose() {
     _nameController.dispose();
     _emailController.dispose();
@@ -59,6 +70,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _birthdateController.dispose();
     _conditionsController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadProfile() async {
+    final profile = await _profileService.loadProfile();
+
+    if (!mounted) return;
+    setState(() {
+      _nameController.text = profile.resolvedDisplayName ?? 'Lola Nena';
+      _emailController.text = profile.email ?? 'user@lifeease.ph';
+      _phoneController.text = profile.phone ?? '+63 917 123 4567';
+      _birthdateController.text = profile.birthdate ?? 'January 15, 1950';
+      _conditionsController.text =
+          profile.medicalConditions ?? 'Hypertension, Type 2 Diabetes';
+    });
   }
 
   @override
@@ -93,9 +118,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
             scrolledUnderElevation: 2,
             actions: [
               TextButton.icon(
-                onPressed: () {
+                onPressed: () async {
                   if (_isEditing) {
-                    _saveProfile(context);
+                    await _saveProfile(context);
                   }
                   setState(() => _isEditing = !_isEditing);
                 },
@@ -594,13 +619,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _saveProfile(BuildContext context) {
+  Future<void> _saveProfile(BuildContext context) async {
+    var savedRemotely = true;
+    final nameParts = _nameController.text.trim().split(RegExp(r'\s+'));
+
+    try {
+      await _profileService.saveProfile(
+        UserProfile(
+          firstName: nameParts.isNotEmpty ? nameParts.first : null,
+          lastName: nameParts.length > 1 ? nameParts.skip(1).join(' ') : null,
+          displayName: _nameController.text.trim(),
+          email: _emailController.text.trim(),
+          phone: _phoneController.text.trim(),
+          birthdate: _birthdateController.text.trim(),
+          medicalConditions: _conditionsController.text.trim(),
+        ),
+      );
+    } catch (_) {
+      savedRemotely = false;
+    }
+
+    if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           tr(
             LanguageController.isTagalog.value,
-            'Profile saved successfully',
+            savedRemotely
+                ? 'Profile saved successfully'
+                : 'Profile saved on this device',
             'Matagumpay na na-save ang profile',
           ),
           style: GoogleFonts.nunitoSans(fontSize: 14),
@@ -645,11 +692,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(ctx);
+              await _authService.signOut();
+              if (!mounted) return;
               Navigator.pushNamedAndRemoveUntil(
                 context,
-                '/login-screen',
+                AppRoutes.loginScreen,
                 (route) => false,
               );
             },

@@ -11,6 +11,8 @@ import 'package:lifeease/shared/widgets/empty_state_widget.dart';
 import 'package:lifeease/shared/widgets/loading_skeleton_widget.dart';
 
 import 'package:lifeease/core/services/backend/reminder_repository.dart';
+import 'package:lifeease/core/services/backend/supabase_auth_service.dart';
+import 'package:lifeease/core/services/backend/user_profile_service.dart';
 import 'package:lifeease/core/services/notifications/reminder_notification_service.dart';
 import 'package:lifeease/core/services/tts/tts_language_service.dart';
 import 'package:lifeease/features/reminders/presentation/add_reminder_screen/add_reminder_screen.dart';
@@ -165,8 +167,11 @@ class _HomeScreenState extends State<HomeScreen>
   bool _isLoading = true;
   List<ReminderModel> _reminders = [];
   bool _isListening = false;
+  String? _firstName;
 
   late final ReminderRepository _reminderRepository;
+  late final SupabaseAuthService _authService;
+  late final UserProfileService _profileService;
   late final SpeechProcessingModule _speechModule;
   late final VoiceCommandProcessingModule _voiceProcessor;
   late final StreamSubscription<void> _reminderChanges;
@@ -195,6 +200,8 @@ class _HomeScreenState extends State<HomeScreen>
       duration: const Duration(milliseconds: 600),
     );
     _reminderRepository = ReminderRepository();
+    _authService = SupabaseAuthService();
+    _profileService = UserProfileService();
     _speechModule = SpeechProcessingModule();
     _voiceProcessor = VoiceCommandProcessingModule();
     WidgetsBinding.instance.addObserver(this);
@@ -202,6 +209,7 @@ class _HomeScreenState extends State<HomeScreen>
       _loadReminders(showLoading: false);
     });
     _loadReminders();
+    _loadProfileName();
   }
 
   @override
@@ -216,7 +224,20 @@ class _HomeScreenState extends State<HomeScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _loadReminders(showLoading: false);
+      _loadProfileName();
     }
+  }
+
+  Future<void> _loadProfileName() async {
+    if (_authService.currentUser == null) {
+      if (!mounted) return;
+      setState(() => _firstName = null);
+      return;
+    }
+
+    final profile = await _profileService.loadProfile();
+    if (!mounted) return;
+    setState(() => _firstName = profile.resolvedFirstName);
   }
 
   Future<void> _loadReminders({bool showLoading = true}) async {
@@ -371,9 +392,11 @@ class _HomeScreenState extends State<HomeScreen>
     final now = DateTime.now();
     final greeting = now.hour < 12
         ? tr(isTagalog, 'Good Morning', 'Magandang Umaga')
-        : now.hour < 17
-        ? tr(isTagalog, 'Good Afternoon', 'Magandang Hapon')
-        : tr(isTagalog, 'Good Evening', 'Magandang Gabi');
+        : tr(isTagalog, 'Good Afternoon', 'Magandang Hapon');
+    final name = _firstName?.trim();
+    final greetingText = name == null || name.isEmpty
+        ? '$greeting!'
+        : '$greeting, $name!';
 
     final dateStr = DateFormat('EEEE, MMM d').format(now);
 
@@ -395,7 +418,7 @@ class _HomeScreenState extends State<HomeScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '$greeting, User!',
+                  greetingText,
                   style: GoogleFonts.nunitoSans(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,

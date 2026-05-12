@@ -55,6 +55,8 @@ class SupabaseAuthService {
   Future<LifeEaseAuthResult> registerWithEmail({
     required String email,
     required String password,
+    String? firstName,
+    String? lastName,
   }) async {
     final client = _client;
     if (client == null) {
@@ -65,7 +67,21 @@ class SupabaseAuthService {
     }
 
     try {
-      await client.auth.signUp(email: email, password: password);
+      final displayName = [firstName, lastName]
+          .whereType<String>()
+          .where((part) => part.trim().isNotEmpty)
+          .map((part) => part.trim())
+          .join(' ');
+      await client.auth.signUp(
+        email: email,
+        password: password,
+        data: {
+          if (firstName?.trim().isNotEmpty == true)
+            'first_name': firstName!.trim(),
+          if (lastName?.trim().isNotEmpty == true) 'last_name': lastName!.trim(),
+          if (displayName.isNotEmpty) 'display_name': displayName,
+        },
+      );
       return const LifeEaseAuthResult(success: true);
     } on AuthException catch (error) {
       return LifeEaseAuthResult(success: false, message: error.message);
@@ -120,5 +136,9 @@ class SupabaseAuthService {
 
   Future<void> sendPasswordReset(String email) async {
     await _client?.auth.resetPasswordForEmail(email);
+  }
+
+  Future<void> signOut() async {
+    await _client?.auth.signOut();
   }
 }

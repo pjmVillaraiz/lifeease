@@ -171,67 +171,6 @@ class _LoginScreenState extends State<LoginScreen>
     }
   }
 
-  Future<void> _forgotPassword() async {
-    final email = _emailController.text.trim();
-    if (email.isEmpty) {
-      setState(() => _emailError = 'Enter your email first to reset password');
-      return;
-    }
-    await _authService.sendPasswordReset(email);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Password reset email sent to $email',
-          style: GoogleFonts.nunitoSans(fontSize: 15),
-        ),
-        backgroundColor: AppTheme.success,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    );
-  }
-
-  Future<void> _register() async {
-    setState(() {
-      _emailError = null;
-      _passwordError = null;
-    });
-
-    final email = _emailController.text.trim();
-    final password = _passwordController.text;
-    if (email.isEmpty || !RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(email)) {
-      setState(() => _emailError = 'Enter a valid email address to register');
-      return;
-    }
-    if (password.length < 6) {
-      setState(
-        () => _passwordError = 'Use a password with at least 6 characters',
-      );
-      return;
-    }
-
-    HapticFeedback.mediumImpact();
-    setState(() => _isLoading = true);
-    final result = await _authService.registerWithEmail(
-      email: email,
-      password: password,
-    );
-    if (!mounted) return;
-    setState(() => _isLoading = false);
-
-    if (result.success) {
-      _showAuthMessage(
-        'Registration submitted. Check your email if confirmation is enabled.',
-      );
-      return;
-    }
-    _showAuthMessage(
-      result.message ?? 'Registration failed. Continue as guest is available.',
-      isError: true,
-    );
-  }
-
   void _showAuthMessage(String message, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -578,7 +517,12 @@ class _LoginScreenState extends State<LoginScreen>
           ],
         ),
         TextButton(
-          onPressed: _forgotPassword,
+          onPressed: _isLoading
+              ? null
+              : () => Navigator.pushNamed(
+                  context,
+                  AppRoutes.forgotPasswordScreen,
+                ),
           style: TextButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 4),
           ),
@@ -734,7 +678,9 @@ class _LoginScreenState extends State<LoginScreen>
           ),
         ),
         TextButton(
-          onPressed: _isLoading ? null : _register,
+          onPressed: _isLoading
+              ? null
+              : () => Navigator.pushNamed(context, AppRoutes.registerScreen),
           style: TextButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 6),
           ),

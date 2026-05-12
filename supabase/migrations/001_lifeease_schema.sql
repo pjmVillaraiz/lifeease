@@ -2,11 +2,26 @@ create extension if not exists "pgcrypto";
 
 create table if not exists public.users (
   id uuid primary key references auth.users(id) on delete cascade,
+  email text,
+  first_name text,
+  last_name text,
   display_name text,
+  phone text,
+  birthdate text,
+  medical_conditions text,
   role text default 'elderly_user',
   language text default 'en',
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
 );
+
+alter table public.users add column if not exists email text;
+alter table public.users add column if not exists first_name text;
+alter table public.users add column if not exists last_name text;
+alter table public.users add column if not exists phone text;
+alter table public.users add column if not exists birthdate text;
+alter table public.users add column if not exists medical_conditions text;
+alter table public.users add column if not exists updated_at timestamptz default now();
 
 create table if not exists public.reminders (
   id uuid primary key default gen_random_uuid(),
@@ -109,8 +124,14 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.users (id, display_name)
-  values (new.id, coalesce(new.raw_user_meta_data->>'display_name', 'LifeEase User'))
+  insert into public.users (id, email, first_name, last_name, display_name)
+  values (
+    new.id,
+    new.email,
+    new.raw_user_meta_data->>'first_name',
+    new.raw_user_meta_data->>'last_name',
+    coalesce(new.raw_user_meta_data->>'display_name', 'LifeEase User')
+  )
   on conflict (id) do nothing;
   return new;
 end;

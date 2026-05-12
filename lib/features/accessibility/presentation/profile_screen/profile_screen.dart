@@ -40,21 +40,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   String tr(bool isTagalog, String en, String tl) => isTagalog ? tl : en;
 
-  final TextEditingController _nameController = TextEditingController(
-    text: 'Lola Nena',
-  );
-  final TextEditingController _emailController = TextEditingController(
-    text: 'user@lifeease.ph',
-  );
-  final TextEditingController _phoneController = TextEditingController(
-    text: '+63 917 123 4567',
-  );
-  final TextEditingController _birthdateController = TextEditingController(
-    text: 'January 15, 1950',
-  );
-  final TextEditingController _conditionsController = TextEditingController(
-    text: 'Hypertension, Type 2 Diabetes',
-  );
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _birthdateController = TextEditingController();
+  final TextEditingController _conditionsController = TextEditingController();
 
   @override
   void initState() {
@@ -77,12 +67,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     if (!mounted) return;
     setState(() {
-      _nameController.text = profile.resolvedDisplayName ?? 'Lola Nena';
-      _emailController.text = profile.email ?? 'user@lifeease.ph';
-      _phoneController.text = profile.phone ?? '+63 917 123 4567';
-      _birthdateController.text = profile.birthdate ?? 'January 15, 1950';
-      _conditionsController.text =
-          profile.medicalConditions ?? 'Hypertension, Type 2 Diabetes';
+      _nameController.text = profile.resolvedDisplayName ?? '';
+      _emailController.text = profile.email ?? '';
+      _phoneController.text = profile.phone ?? '';
+      _birthdateController.text = profile.birthdate ?? '';
+      _conditionsController.text = profile.medicalConditions ?? '';
     });
   }
 
@@ -341,7 +330,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           const SizedBox(height: 12),
           Text(
-            _nameController.text,
+            _nameController.text.trim().isEmpty
+                ? 'LifeEase Member'
+                : _nameController.text,
             style: GoogleFonts.nunitoSans(
               fontSize: 20,
               fontWeight: FontWeight.w700,

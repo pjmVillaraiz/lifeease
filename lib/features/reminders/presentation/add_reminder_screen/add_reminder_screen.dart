@@ -171,12 +171,19 @@ class _AddReminderScreenState extends State<AddReminderScreen>
       return;
     }
 
+    setState(() => _isSaving = true);
+    HapticFeedback.mediumImpact();
+
     final scheduled = DateTime(
       _selectedDate.year,
       _selectedDate.month,
       _selectedDate.day,
       _selectedTime.hour,
       _selectedTime.minute,
+    );
+    final existing = widget.editReminder;
+    final existingReminders = await _loadScheduledReminders(
+      exceptId: existing?['id']?.toString(),
     );
     final decision = _schedulingEngine.evaluate(
       SchedulingRequest(
@@ -189,13 +196,27 @@ class _AddReminderScreenState extends State<AddReminderScreen>
             ? ReminderPriority.high
             : ReminderPriority.normal,
       ),
-      const [],
+      existingReminders,
     );
 
-    setState(() => _isSaving = true);
-    HapticFeedback.mediumImpact();
+    if (!decision.allowed) {
+      if (!mounted) return;
+      setState(() {
+        _isSaving = false;
+        _selectedDate = DateTime(
+          decision.scheduledAt.year,
+          decision.scheduledAt.month,
+          decision.scheduledAt.day,
+        );
+        _selectedTime = TimeOfDay.fromDateTime(decision.scheduledAt);
+        _timeError = decision.hardViolations.first;
+      });
+      _showSchedulingConflictSnackBar(decision);
+      HapticFeedback.lightImpact();
+      return;
+    }
+
     final now = DateTime.now();
-    final existing = widget.editReminder;
     final reminderId = existing?['id']?.toString() ?? _uuidV4();
     final createdAt =
         existing?['created_at']?.toString() ?? now.toIso8601String();
@@ -276,6 +297,76 @@ class _AddReminderScreenState extends State<AddReminderScreen>
         (route) => false,
       );
     }
+  }
+
+  Future<List<ScheduledReminder>> _loadScheduledReminders({
+    String? exceptId,
+  }) async {
+    final reminders = await _reminderRepository.loadReminders();
+    final scheduled = <ScheduledReminder>[];
+
+    for (final reminder in reminders) {
+      if (reminder['id']?.toString() == exceptId) continue;
+      if (reminder['is_completed'] == true || reminder['isCompleted'] == true) {
+        continue;
+      }
+      if (reminder['is_canceled'] == true || reminder['isCanceled'] == true) {
+        continue;
+      }
+
+      final scheduledAt = _dateTimeFromValue(
+        reminder['reminder_time'] ?? reminder['scheduledTimeMillis'],
+      );
+      if (scheduledAt == null) continue;
+
+      scheduled.add(
+        ScheduledReminder(
+          title: reminder['title']?.toString() ?? '',
+          category: reminder['category']?.toString() ?? 'general',
+          scheduledAt: scheduledAt,
+          priority: _priorityFromValue(reminder['priority']),
+        ),
+      );
+    }
+
+    return scheduled;
+  }
+
+  ReminderPriority _priorityFromValue(Object? value) {
+    final normalized = value?.toString().toLowerCase();
+    return ReminderPriority.values.firstWhere(
+      (priority) => priority.name == normalized,
+      orElse: () => ReminderPriority.normal,
+    );
+  }
+
+  void _showSchedulingConflictSnackBar(SchedulingDecision decision) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '${decision.hardViolations.first} Suggested time: '
+          '${_formatSuggestedTime(decision.scheduledAt)}',
+          style: GoogleFonts.nunitoSans(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: Colors.white,
+          ),
+        ),
+        backgroundColor: AppTheme.errorRed,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+  String _formatSuggestedTime(DateTime dateTime) {
+    final hour = dateTime.hour == 0
+        ? 12
+        : (dateTime.hour > 12 ? dateTime.hour - 12 : dateTime.hour);
+    final minute = dateTime.minute.toString().padLeft(2, '0');
+    final suffix = dateTime.hour < 12 ? 'AM' : 'PM';
+    return '${dateTime.month}/${dateTime.day} $hour:$minute $suffix';
   }
 
   String _repeatTypeFromMinutes() {

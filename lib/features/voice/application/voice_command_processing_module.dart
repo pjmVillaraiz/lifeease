@@ -1,3 +1,5 @@
+import 'package:lifeease/core/services/backend/edge_ai_service.dart';
+
 enum LightweightNlpModel { gemma2bIt, mobileBertIntent }
 
 enum VoiceIntentType {
@@ -46,6 +48,11 @@ class VoiceIntentResult {
 }
 
 class VoiceCommandProcessingModule {
+  final EdgeAiService _edgeAi;
+
+  VoiceCommandProcessingModule({EdgeAiService? edgeAi})
+    : _edgeAi = edgeAi ?? EdgeAiService();
+
   static const List<String> _keywords = [
     'medicine',
     'gamot',
@@ -60,6 +67,12 @@ class VoiceCommandProcessingModule {
   ];
 
   Future<VoiceIntentResult> parseAsync(String rawText) async {
+    if (_edgeAi.isConfigured && rawText.trim().isNotEmpty) {
+      final remote = await _edgeAi.processCommand(rawText);
+      final parsed = _fromRemoteResult(rawText, remote);
+      if (parsed != null) return parsed;
+    }
+
     return Future<VoiceIntentResult>.microtask(() => parse(rawText));
   }
 
@@ -171,6 +184,58 @@ class VoiceCommandProcessingModule {
   String _capitalize(String text) {
     if (text.isEmpty) return text;
     return text[0].toUpperCase() + text.substring(1);
+  }
+
+  VoiceIntentResult? _fromRemoteResult(
+    String rawText,
+    Map<String, dynamic>? data,
+  ) {
+    if (data == null || data['usedFallback'] == true) return null;
+
+    final normalized = rawText.trim().toLowerCase().replaceAll(
+      RegExp(r'\s+'),
+      ' ',
+    );
+    final intent = data['intent']?.toString() ?? 'unknown';
+    final type = _typeFromIntent(intent);
+    final task = data['task']?.toString().trim();
+    final summary = data['summary']?.toString().trim();
+    final confidence = (data['confidence'] as num?)?.toDouble() ?? 0.75;
+
+    return VoiceIntentResult(
+      type: type,
+      normalizedText: normalized,
+      summary: summary == null || summary.isEmpty
+          ? summarizeText(rawText)
+          : summary,
+      intent: _intentName(type),
+      task: task == null || task.isEmpty
+          ? _extractTask(rawText, normalized)
+          : task,
+      time: data['time']?.toString(),
+      repeat: data['repeat']?.toString(),
+      confidence: confidence.clamp(0.0, 0.99),
+      detectedKeywords: _keywords.where(normalized.contains).toList(),
+      recommendedPrimaryModel: LightweightNlpModel.gemma2bIt,
+      recommendedSecondaryModel: LightweightNlpModel.mobileBertIntent,
+    );
+  }
+
+  VoiceIntentType _typeFromIntent(String intent) {
+    switch (intent.toLowerCase()) {
+      case 'create_reminder':
+      case 'add_reminder':
+      case 'hydration_reminder':
+        return VoiceIntentType.addReminder;
+      case 'call_emergency':
+        return VoiceIntentType.callEmergency;
+      case 'translate':
+        return VoiceIntentType.translate;
+      case 'summarize':
+        return VoiceIntentType.summarize;
+      default:
+        return VoiceIntentType.unknown;
+    }
   }
 
   VoiceIntentType _detectIntent(String text) {

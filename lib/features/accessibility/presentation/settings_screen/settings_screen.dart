@@ -23,6 +23,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final SusProcessingModule _susProcessor = SusProcessingModule();
   final LanguageTranslationProcessingModule _translationProcessor =
       LanguageTranslationProcessingModule();
+  SusEvaluationResult? _latestSusResult;
 
   final List<String> _leadTimeOptions = [
     '5 minutes',
@@ -34,6 +35,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   String tr(String en, String tl) {
     return LanguageController.isTagalog.value ? tl : en;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLatestSusResult();
+  }
+
+  Future<void> _loadLatestSusResult() async {
+    final results = await _susProcessor.loadResults();
+    if (!mounted || results.isEmpty) return;
+    setState(() => _latestSusResult = results.first);
   }
 
   Future<void> _syncNotificationSchedule() async {
@@ -297,6 +310,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               onTap: _runSusBaselineEvaluation,
             ),
+            if (_latestSusResult != null) ...[
+              _buildDivider(theme),
+              _buildSusSummaryTile(theme, _latestSusResult!),
+            ],
           ]),
           SizedBox(height: 3.h),
         ],
@@ -543,6 +560,71 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Widget _buildSusSummaryTile(ThemeData theme, SusEvaluationResult result) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 1.5.h),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: AppTheme.success.withAlpha(25),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Center(
+              child: CustomIconWidget(
+                iconName: 'insights',
+                color: AppTheme.success,
+                size: 20,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Latest score: ${result.score.toStringAsFixed(1)} (${result.rating})',
+                  style: GoogleFonts.nunitoSans(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: theme.colorScheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  result.interpretation,
+                  style: GoogleFonts.nunitoSans(
+                    fontSize: 13,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                if (result.improvements.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  ...result.improvements.take(2).map(
+                    (item) => Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        '- $item',
+                        style: GoogleFonts.nunitoSans(
+                          fontSize: 13,
+                          color: theme.colorScheme.onSurface,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildDivider(ThemeData theme) {
     return Divider(
       height: 1,
@@ -610,6 +692,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(purpose),
+                  const SizedBox(height: 8),
+                  Text(
+                    '1 = Strongly disagree, 5 = Strongly agree',
+                    style: GoogleFonts.nunitoSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                   const SizedBox(height: 12),
                   ...List.generate(SusProcessingModule.questions.length, (i) {
                     return Padding(
@@ -627,6 +717,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             onChanged: (value) {
                               setDialogState(() => answers[i] = value.round());
                             },
+                          ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Strongly disagree',
+                                style: GoogleFonts.nunitoSans(fontSize: 11),
+                              ),
+                              Text(
+                                'Strongly agree',
+                                style: GoogleFonts.nunitoSans(fontSize: 11),
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -647,6 +750,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 await _susProcessor.saveResult(result);
                 if (!ctx.mounted) return;
                 Navigator.pop(ctx);
+                if (mounted) {
+                  setState(() => _latestSusResult = result);
+                }
                 _showSusResult(result);
               },
               child: const Text('Calculate'),
@@ -662,10 +768,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('SUS Result'),
-        content: Text(
-          'SUS Score: ${result.score.toStringAsFixed(1)}\n'
-          'Rating: ${result.rating}\n'
-          'Interpretation: ${result.interpretation}',
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'SUS Score: ${result.score.toStringAsFixed(1)}\n'
+                'Rating: ${result.rating}\n'
+                'Interpretation: ${result.interpretation}',
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Recommended improvements',
+                style: GoogleFonts.nunitoSans(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ...result.improvements.map(
+                (item) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text('- $item'),
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(

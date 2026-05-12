@@ -20,5 +20,18 @@ void main() {
 
       expect(() => module.computeScore([1, 2, 3]), throwsArgumentError);
     });
+
+    test('builds improvement plan from low usability answers', () {
+      final module = SusProcessingModule();
+
+      final result = module.evaluate([2, 4, 2, 4, 2, 4, 2, 4, 2, 4]);
+
+      expect(result.rating, 'Needs Improvement');
+      expect(result.improvements, isNotEmpty);
+      expect(
+        result.improvements,
+        contains('Reduce form steps and keep reminder actions visible and simple.'),
+      );
+    });
   });
 }

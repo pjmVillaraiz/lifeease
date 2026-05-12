@@ -55,8 +55,15 @@ class SupabaseAuthService {
     }
 
     try {
-      await client.auth.signInWithPassword(email: email, password: password);
+      final response = await client.auth.signInWithPassword(
+        email: email,
+        password: password,
+      );
       await _setSessionMode(_userMode);
+      await _ensureUserProfile(
+        user: response.user ?? client.auth.currentUser,
+        email: email,
+      );
       return const LifeEaseAuthResult(success: true);
     } on AuthException catch (error) {
       return LifeEaseAuthResult(success: false, message: error.message);
@@ -88,7 +95,7 @@ class SupabaseAuthService {
           .where((part) => part.trim().isNotEmpty)
           .map((part) => part.trim())
           .join(' ');
-      await client.auth.signUp(
+      final response = await client.auth.signUp(
         email: email,
         password: password,
         data: {
@@ -99,6 +106,13 @@ class SupabaseAuthService {
         },
       );
       await _setSessionMode(_userMode);
+      await _ensureUserProfile(
+        user: response.user ?? client.auth.currentUser,
+        email: email,
+        firstName: firstName,
+        lastName: lastName,
+        displayName: displayName,
+      );
       return const LifeEaseAuthResult(success: true);
     } on AuthException catch (error) {
       return LifeEaseAuthResult(success: false, message: error.message);
@@ -180,5 +194,31 @@ class SupabaseAuthService {
   Future<void> _clearSessionMode() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_sessionModeKey);
+  }
+
+  Future<void> _ensureUserProfile({
+    required User? user,
+    required String email,
+    String? firstName,
+    String? lastName,
+    String? displayName,
+  }) async {
+    final client = _client;
+    if (client == null || user == null) return;
+
+    try {
+      await client.from('users').upsert({
+        'id': user.id,
+        'email': email.trim(),
+        if (firstName?.trim().isNotEmpty == true)
+          'first_name': firstName!.trim(),
+        if (lastName?.trim().isNotEmpty == true) 'last_name': lastName!.trim(),
+        if (displayName?.trim().isNotEmpty == true)
+          'display_name': displayName!.trim(),
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+    } catch (_) {
+      // Profile sync is retried from the profile screen; auth should still pass.
+    }
   }
 }

@@ -16,6 +16,7 @@ import 'package:lifeease/core/services/backend/user_profile_service.dart';
 import 'package:lifeease/core/services/notifications/reminder_notification_service.dart';
 import 'package:lifeease/core/services/tts/tts_language_service.dart';
 import 'package:lifeease/features/reminders/presentation/add_reminder_screen/add_reminder_screen.dart';
+import 'package:lifeease/features/sus_evaluation/application/sus_processing_module.dart';
 import 'package:lifeease/features/voice/application/speech_processing_module.dart';
 import 'package:lifeease/features/voice/application/voice_command_processing_module.dart';
 
@@ -174,6 +175,7 @@ class _HomeScreenState extends State<HomeScreen>
   late final UserProfileService _profileService;
   late final SpeechProcessingModule _speechModule;
   late final VoiceCommandProcessingModule _voiceProcessor;
+  late final SusProcessingModule _susProcessor;
   late final StreamSubscription<void> _reminderChanges;
 
   late AnimationController _listEntranceController;
@@ -204,6 +206,7 @@ class _HomeScreenState extends State<HomeScreen>
     _profileService = UserProfileService();
     _speechModule = SpeechProcessingModule();
     _voiceProcessor = VoiceCommandProcessingModule();
+    _susProcessor = SusProcessingModule();
     WidgetsBinding.instance.addObserver(this);
     _reminderChanges = ReminderRepository.changes.listen((_) {
       _loadReminders(showLoading: false);
@@ -362,6 +365,9 @@ class _HomeScreenState extends State<HomeScreen>
                   SliverToBoxAdapter(child: _buildHeader(theme, isTagalog)),
                   SliverToBoxAdapter(child: _buildTopAction(theme, isTagalog)),
                   SliverToBoxAdapter(
+                    child: _buildSusShortcut(theme, isTagalog),
+                  ),
+                  SliverToBoxAdapter(
                     child: _buildStatusCards(theme, isTagalog),
                   ),
                   SliverToBoxAdapter(
@@ -478,6 +484,204 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildSusShortcut(ThemeData theme, bool isTagalog) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 6, 20, 14),
+      child: Material(
+        color: theme.colorScheme.secondaryContainer.withAlpha(180),
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          onTap: _runSusEvaluation,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surface,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.fact_check_outlined,
+                    color: theme.colorScheme.secondary,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        tr(
+                          isTagalog,
+                          'Evaluate usability',
+                          'Suriin ang paggamit',
+                        ),
+                        style: GoogleFonts.nunitoSans(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: theme.colorScheme.onSecondaryContainer,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        tr(
+                          isTagalog,
+                          'Open the SUS questionnaire',
+                          'Buksan ang SUS questionnaire',
+                        ),
+                        style: GoogleFonts.nunitoSans(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: theme.colorScheme.onSecondaryContainer
+                              .withAlpha(190),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right,
+                  color: theme.colorScheme.onSecondaryContainer,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _runSusEvaluation() {
+    final answers = List<int>.filled(10, 3);
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('SUS Evaluation'),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(_susProcessor.getPurposeDescription()),
+                  const SizedBox(height: 8),
+                  Text(
+                    '1 = Strongly disagree, 5 = Strongly agree',
+                    style: GoogleFonts.nunitoSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ...List.generate(SusProcessingModule.questions.length, (i) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('${i + 1}. ${SusProcessingModule.questions[i]}'),
+                          Slider(
+                            min: 1,
+                            max: 5,
+                            divisions: 4,
+                            label: answers[i].toString(),
+                            value: answers[i].toDouble(),
+                            onChanged: (value) {
+                              setDialogState(() => answers[i] = value.round());
+                            },
+                          ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Strongly disagree',
+                                style: GoogleFonts.nunitoSans(fontSize: 11),
+                              ),
+                              Text(
+                                'Strongly agree',
+                                style: GoogleFonts.nunitoSans(fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final result = _susProcessor.evaluate(answers);
+                await _susProcessor.saveResult(result);
+                if (!ctx.mounted) return;
+                Navigator.pop(ctx);
+                _showSusResult(result);
+              },
+              child: const Text('Calculate'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showSusResult(SusEvaluationResult result) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('SUS Result'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'SUS Score: ${result.score.toStringAsFixed(1)}\n'
+                'Rating: ${result.rating}\n'
+                'Interpretation: ${result.interpretation}',
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Recommended improvements',
+                style: GoogleFonts.nunitoSans(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ...result.improvements.map(
+                (item) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text('- $item'),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
       ),
     );
   }

@@ -6,12 +6,14 @@ class SusEvaluationResult {
   final double score;
   final String rating;
   final String interpretation;
+  final List<String> improvements;
   final DateTime createdAt;
 
   const SusEvaluationResult({
     required this.score,
     required this.rating,
     required this.interpretation,
+    this.improvements = const [],
     required this.createdAt,
   });
 
@@ -19,6 +21,7 @@ class SusEvaluationResult {
     'sus_score': score.round(),
     'rating': rating,
     'interpretation': interpretation,
+    'improvements': improvements,
     'created_at': createdAt.toIso8601String(),
   };
 }
@@ -65,8 +68,49 @@ class SusProcessingModule {
       score: score,
       rating: rating,
       interpretation: _interpret(score),
+      improvements: buildImprovementPlan(answers),
       createdAt: DateTime.now(),
     );
+  }
+
+  List<String> buildImprovementPlan(List<int> answers) {
+    if (answers.length != 10) {
+      throw ArgumentError('SUS requires exactly 10 answers.');
+    }
+
+    final improvements = <String>[];
+    void add(String value) {
+      if (!improvements.contains(value)) improvements.add(value);
+    }
+
+    if (answers[0] <= 3) {
+      add('Make daily reminders faster to reach from the home screen.');
+    }
+    if (answers[1] >= 3 || answers[7] >= 3) {
+      add('Reduce form steps and keep reminder actions visible and simple.');
+    }
+    if (answers[2] <= 3) {
+      add('Improve labels, spacing, and defaults so first-time use feels clear.');
+    }
+    if (answers[3] >= 3 || answers[9] >= 3) {
+      add('Add clearer onboarding and contextual help for voice and reminder setup.');
+    }
+    if (answers[4] <= 3 || answers[5] >= 3) {
+      add('Make voice, translation, scheduling, and notifications feel more consistent.');
+    }
+    if (answers[6] <= 3) {
+      add('Simplify navigation so new users can learn the app quickly.');
+    }
+    if (answers[8] <= 3) {
+      add('Add stronger success feedback after saving, completing, or changing reminders.');
+    }
+
+    if (improvements.isEmpty) {
+      return const [
+        'Maintain the current design and continue monitoring SUS after each release.',
+      ];
+    }
+    return improvements.take(4).toList();
   }
 
   Future<void> saveResult(SusEvaluationResult result) async {
@@ -86,6 +130,11 @@ class SusProcessingModule {
         score: score,
         rating: json['rating'] as String,
         interpretation: json['interpretation'] as String,
+        improvements:
+            (json['improvements'] as List<dynamic>?)
+                ?.map((item) => item.toString())
+                .toList() ??
+            const [],
         createdAt:
             DateTime.tryParse(json['created_at'] as String? ?? '') ??
             DateTime.now(),

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
@@ -30,6 +32,8 @@ class ReminderModel {
   final String userUid;
   final int createdAt;
   final bool isSynced;
+  final String lastOccurrenceStatus;
+  final String lastOccurrenceDate;
 
   const ReminderModel({
     required this.id,
@@ -44,6 +48,8 @@ class ReminderModel {
     required this.userUid,
     required this.createdAt,
     required this.isSynced,
+    this.lastOccurrenceStatus = '',
+    this.lastOccurrenceDate = '',
   });
 
   factory ReminderModel.fromMap(Map<String, dynamic> map) {
@@ -60,7 +66,9 @@ class ReminderModel {
       isCanceled:
           map['isCanceled'] as bool? ??
           map['is_canceled'] as bool? ??
-          map['sync_status'] == 'canceled',
+          map['sync_status'] == 'canceled' ||
+              map['sync_status'] == 'cancelled' ||
+              map['task_status'] == 'cancelled',
       isRepeating:
           map['isRepeating'] as bool? ??
           ((map['repeat_type']?.toString() ?? '').isNotEmpty &&
@@ -72,7 +80,20 @@ class ReminderModel {
       userUid: map['userUid'] as String? ?? '',
       createdAt: _millisFromValue(createdValue),
       isSynced: map['isSynced'] as bool? ?? map['sync_status'] == 'synced',
+      lastOccurrenceStatus: map['last_occurrence_status']?.toString() ?? '',
+      lastOccurrenceDate: map['last_occurrence_date']?.toString() ?? '',
     );
+  }
+
+  bool get isCompletedToday {
+    return lastOccurrenceStatus == 'completed' &&
+        lastOccurrenceDate == _dateKey(DateTime.now());
+  }
+
+  bool get isCanceledToday {
+    return (lastOccurrenceStatus == 'cancelled' ||
+            lastOccurrenceStatus == 'canceled') &&
+        lastOccurrenceDate == _dateKey(DateTime.now());
   }
 
   Map<String, dynamic> toMap() => {
@@ -89,6 +110,8 @@ class ReminderModel {
     'userUid': userUid,
     'createdAt': createdAt,
     'isSynced': isSynced,
+    'last_occurrence_status': lastOccurrenceStatus,
+    'last_occurrence_date': lastOccurrenceDate,
   };
 
   static int _millisFromValue(Object? value) {
@@ -121,6 +144,12 @@ class ReminderModel {
         return 0;
     }
   }
+
+  static String _dateKey(DateTime date) {
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '${date.year}-$month-$day';
+  }
 }
 
 class HomeScreen extends StatefulWidget {
@@ -130,7 +159,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+class _HomeScreenState extends State<HomeScreen>
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   int _currentNavIndex = 0;
   bool _isLoading = true;
   List<ReminderModel> _reminders = [];
@@ -139,6 +169,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   late final ReminderRepository _reminderRepository;
   late final SpeechProcessingModule _speechModule;
   late final VoiceCommandProcessingModule _voiceProcessor;
+  late final StreamSubscription<void> _reminderChanges;
 
   late AnimationController _listEntranceController;
 
@@ -166,17 +197,33 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _reminderRepository = ReminderRepository();
     _speechModule = SpeechProcessingModule();
     _voiceProcessor = VoiceCommandProcessingModule();
+    WidgetsBinding.instance.addObserver(this);
+    _reminderChanges = ReminderRepository.changes.listen((_) {
+      _loadReminders(showLoading: false);
+    });
     _loadReminders();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _reminderChanges.cancel();
     _listEntranceController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadReminders() async {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadReminders(showLoading: false);
+    }
+  }
+
+  Future<void> _loadReminders({bool showLoading = true}) async {
     if (!mounted) return;
+    if (showLoading && !_isLoading) {
+      setState(() => _isLoading = true);
+    }
 
     final rows = await _reminderRepository.loadReminders();
     if (!mounted) return;
@@ -420,13 +467,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               !r.isCompleted && !r.isCanceled && r.scheduledTimeMillis >= now,
         )
         .length;
-    final completedCount = _reminders.where((r) => r.isCompleted).length;
+    final completedCount = _reminders
+        .where((r) => r.isCompleted || r.isCompletedToday)
+        .length;
     final missedCount = _reminders
         .where(
           (r) => !r.isCompleted && !r.isCanceled && r.scheduledTimeMillis < now,
         )
         .length;
-    final cancelledCount = _reminders.where((r) => r.isCanceled).length;
+    final cancelledCount = _reminders
+        .where((r) => r.isCanceled || r.isCanceledToday)
+        .length;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),

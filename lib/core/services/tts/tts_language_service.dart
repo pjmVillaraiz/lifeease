@@ -89,7 +89,7 @@ class TtsLanguageService {
   static String canceledLabel() {
     return currentLanguage == AppSpeechLanguage.tagalog
         ? 'Kinansela'
-        : 'Canceled';
+        : 'Cancelled';
   }
 
   static String notificationTitle() {

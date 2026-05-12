@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
@@ -13,7 +15,7 @@ import 'package:lifeease/shared/widgets/app_navigation.dart';
 import 'package:lifeease/shared/widgets/empty_state_widget.dart';
 import 'package:lifeease/shared/widgets/loading_skeleton_widget.dart';
 
-enum ReminderFilter { all, pending, completed, missed }
+enum ReminderFilter { all, pending, completed, cancelled, missed }
 
 class AllRemindersScreen extends StatefulWidget {
   const AllRemindersScreen({super.key});
@@ -22,7 +24,8 @@ class AllRemindersScreen extends StatefulWidget {
   State<AllRemindersScreen> createState() => _AllRemindersScreenState();
 }
 
-class _AllRemindersScreenState extends State<AllRemindersScreen> {
+class _AllRemindersScreenState extends State<AllRemindersScreen>
+    with WidgetsBindingObserver {
   final ReminderRepository _reminderRepository = ReminderRepository();
   final DateFormat _dateFormat = DateFormat('MMM d, yyyy');
   final DateFormat _timeFormat = DateFormat('h:mm a');
@@ -30,19 +33,40 @@ class _AllRemindersScreenState extends State<AllRemindersScreen> {
   bool _isLoading = true;
   ReminderFilter _filter = ReminderFilter.all;
   List<ReminderModel> _reminders = [];
+  late final StreamSubscription<void> _reminderChanges;
 
   String tr(bool isTagalog, String en, String tl) => isTagalog ? tl : en;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _reminderChanges = ReminderRepository.changes.listen((_) {
+      _loadReminders(showLoading: false);
+    });
     _loadReminders();
   }
 
-  Future<void> _loadReminders() async {
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _reminderChanges.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadReminders(showLoading: false);
+    }
+  }
+
+  Future<void> _loadReminders({bool showLoading = true}) async {
     if (!mounted) return;
 
-    setState(() => _isLoading = true);
+    if (showLoading) {
+      setState(() => _isLoading = true);
+    }
     await _reminderRepository.syncQueuedReminders();
     final rows = await _reminderRepository.loadReminders();
     if (!mounted) return;
@@ -106,7 +130,13 @@ class _AllRemindersScreenState extends State<AllRemindersScreen> {
             .where((r) => !r.isCompleted && !r.isCanceled && !_isMissed(r))
             .toList();
       case ReminderFilter.completed:
-        return _reminders.where((r) => r.isCompleted).toList();
+        return _reminders
+            .where((r) => r.isCompleted || r.isCompletedToday)
+            .toList();
+      case ReminderFilter.cancelled:
+        return _reminders
+            .where((r) => r.isCanceled || r.isCanceledToday)
+            .toList();
       case ReminderFilter.missed:
         return _reminders.where(_isMissed).toList();
       case ReminderFilter.all:
@@ -201,9 +231,14 @@ class _AllRemindersScreenState extends State<AllRemindersScreen> {
 
   Widget _buildSummary(ThemeData theme, bool isTagalog) {
     final pending = _reminders
-        .where((r) => !r.isCompleted && !r.isCanceled)
+        .where((r) => !r.isCompleted && !r.isCanceled && !_isMissed(r))
         .length;
-    final completed = _reminders.where((r) => r.isCompleted).length;
+    final completed = _reminders
+        .where((r) => r.isCompleted || r.isCompletedToday)
+        .length;
+    final cancelled = _reminders
+        .where((r) => r.isCanceled || r.isCanceledToday)
+        .length;
     final missed = _reminders.where(_isMissed).length;
 
     return Padding(
@@ -228,6 +263,13 @@ class _AllRemindersScreenState extends State<AllRemindersScreen> {
               label: tr(isTagalog, 'Done', 'Tapos'),
               count: completed,
               icon: Icons.check_circle_outline_rounded,
+            ),
+            _buildSummaryDivider(theme),
+            _buildSummaryItem(
+              theme,
+              label: tr(isTagalog, 'Cancelled', 'Kinansela'),
+              count: cancelled,
+              icon: Icons.cancel_outlined,
             ),
             _buildSummaryDivider(theme),
             _buildSummaryItem(
@@ -306,6 +348,11 @@ class _AllRemindersScreenState extends State<AllRemindersScreen> {
           ),
           _buildFilterChip(
             theme,
+            label: tr(isTagalog, 'Cancelled', 'Kinansela'),
+            filter: ReminderFilter.cancelled,
+          ),
+          _buildFilterChip(
+            theme,
             label: tr(isTagalog, 'Missed', 'Missed'),
             filter: ReminderFilter.missed,
           ),
@@ -375,6 +422,7 @@ class _AllRemindersScreenState extends State<AllRemindersScreen> {
             reminder: reminder,
             isMissed: _isMissed(reminder),
             isSynced: SupabaseConfig.isInitialized && reminder.isSynced,
+            isTagalog: isTagalog,
             dateFormat: _dateFormat,
             timeFormat: _timeFormat,
             onDelete: () => _deleteReminder(reminder),
@@ -395,6 +443,7 @@ class _ReminderListTile extends StatelessWidget {
   final ReminderModel reminder;
   final bool isMissed;
   final bool isSynced;
+  final bool isTagalog;
   final DateFormat dateFormat;
   final DateFormat timeFormat;
   final VoidCallback onDelete;
@@ -405,6 +454,7 @@ class _ReminderListTile extends StatelessWidget {
     required this.reminder,
     required this.isMissed,
     required this.isSynced,
+    required this.isTagalog,
     required this.dateFormat,
     required this.timeFormat,
     required this.onDelete,
@@ -418,20 +468,20 @@ class _ReminderListTile extends StatelessWidget {
     final scheduled = DateTime.fromMillisecondsSinceEpoch(
       reminder.scheduledTimeMillis,
     );
-    final accent = reminder.isCanceled
+    final accent = reminder.isCanceled || reminder.isCanceledToday
         ? theme.colorScheme.outline
-        : reminder.isCompleted
+        : reminder.isCompleted || reminder.isCompletedToday
         ? AppTheme.success
         : isMissed
         ? AppTheme.errorRed
         : AppTheme.primaryBlue;
-    final statusLabel = reminder.isCanceled
+    final statusLabel = reminder.isCanceled || reminder.isCanceledToday
         ? TtsLanguageService.canceledLabel()
-        : reminder.isCompleted
-        ? 'Completed'
+        : reminder.isCompleted || reminder.isCompletedToday
+        ? (isTagalog ? 'Tapos Na' : 'Completed')
         : isMissed
-        ? 'Missed'
-        : 'Pending';
+        ? (isTagalog ? 'Nalagpasan' : 'Missed')
+        : (isTagalog ? 'Nakabinbin' : 'Pending');
 
     return InkWell(
       onTap: onEdit,

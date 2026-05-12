@@ -231,9 +231,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 'Ipakita ang app sa wikang Filipino',
               ),
               value: _controller.tagalog,
-              onChanged: (v) {
+              onChanged: (v) async {
                 _controller.updateTagalog(v);
                 LanguageController.isTagalog.value = v;
+                await _syncNotificationSchedule();
                 setState(() {});
               },
             ),

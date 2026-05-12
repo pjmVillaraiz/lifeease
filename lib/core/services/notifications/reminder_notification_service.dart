@@ -64,6 +64,8 @@ class ReminderNotificationService {
       'Alerts for scheduled LifeEase reminders.';
   static const String _doneActionId = 'mark_done';
   static const String _stopActionId = 'stop_repeating';
+  static const String _darwinEnglishCategoryId = 'lifeease_reminder_actions_en';
+  static const String _darwinTagalogCategoryId = 'lifeease_reminder_actions_tl';
   static const String _repeatConfigPrefix = 'lifeease.reminder.repeat.';
   static const String _scheduledIdsKey = 'lifeease.reminder.scheduled_ids';
 
@@ -79,8 +81,10 @@ class ReminderNotificationService {
       const androidSettings = AndroidInitializationSettings(
         '@mipmap/ic_launcher',
       );
-      const iosSettings = DarwinInitializationSettings();
-      const settings = InitializationSettings(
+      final iosSettings = DarwinInitializationSettings(
+        notificationCategories: _darwinReminderCategories(),
+      );
+      final settings = InitializationSettings(
         android: androidSettings,
         iOS: iosSettings,
       );
@@ -111,7 +115,7 @@ class ReminderNotificationService {
       }
       return;
     }
-    if (reminder['isCompleted'] == true || reminder['is_completed'] == true) {
+    if (_isCompleted(reminder) || _isCanceled(reminder)) {
       await cancelReminder(id);
       return;
     }
@@ -296,6 +300,7 @@ class ReminderNotificationService {
       presentAlert: true,
       presentBadge: true,
       presentSound: settings.soundEnabled,
+      categoryIdentifier: _currentDarwinCategoryId(),
     );
 
     return NotificationDetails(android: android, iOS: ios);
@@ -405,6 +410,20 @@ class ReminderNotificationService {
     await initialize(requestPermissions: false);
 
     final reminder = Map<String, dynamic>.from(params);
+    final id = reminder['id']?.toString();
+    if (id != null && id.isNotEmpty) {
+      final latestReminder = await ReminderRepository().loadReminderById(id);
+      if (latestReminder != null &&
+          (_isCompleted(latestReminder) || _isCanceled(latestReminder))) {
+        debugPrint(
+          'Reminder alarm $alarmId ignored because reminder $id is already '
+          'completed or cancelled.',
+        );
+        await _cancelAlarmById(alarmId);
+        return;
+      }
+    }
+
     final scheduledAt = _dateTimeFromValue(
       reminder['reminder_time'] ?? reminder['scheduledTimeMillis'],
     );
@@ -472,16 +491,18 @@ class ReminderNotificationService {
     }
 
     final payload = _payloadFrom(response.payload);
-    if (payload == null) return;
-
-    if (response.actionId == _doneActionId && payload.reminderId.isNotEmpty) {
-      await ReminderRepository().markReminderCompleteById(payload.reminderId);
+    if (payload == null) {
+      debugPrint(
+        'Reminder notification action ignored: missing payload for '
+        '${response.actionId}.',
+      );
+      return;
     }
-    if (response.actionId == _stopActionId && payload.reminderId.isNotEmpty) {
-      await ReminderRepository().markReminderCanceledById(payload.reminderId);
-    }
 
-    await _cancelAlarmById(payload.alarmId);
+    await _applyNotificationAction(
+      actionId: response.actionId,
+      payload: payload,
+    );
   }
 
   DateTime? _dateTimeFromValue(Object? value) {
@@ -522,6 +543,46 @@ class ReminderNotificationService {
       await _tts.stop();
       await _tts.speak(text);
     });
+  }
+
+  Future<void> _applyNotificationAction({
+    required String? actionId,
+    required _NotificationPayload payload,
+  }) async {
+    try {
+      debugPrint(
+        'Reminder notification action received: $actionId '
+        'alarm=${payload.alarmId} reminder=${payload.reminderId}.',
+      );
+
+      await _cancelActionAlarms(payload);
+      await _tts.stop();
+
+      if (payload.reminderId.isEmpty) {
+        debugPrint(
+          'Reminder notification action could only cancel alarm '
+          '${payload.alarmId}; reminder id was missing.',
+        );
+        return;
+      }
+
+      final repository = ReminderRepository();
+      if (actionId == _doneActionId) {
+        await repository.markReminderCompleteById(payload.reminderId);
+        await _rescheduleRepeatingReminder(payload.reminderId);
+        debugPrint('Reminder ${payload.reminderId} marked completed.');
+        return;
+      }
+
+      if (actionId == _stopActionId) {
+        await repository.markReminderCanceledById(payload.reminderId);
+        await _rescheduleRepeatingReminder(payload.reminderId);
+        debugPrint('Reminder ${payload.reminderId} marked canceled.');
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Reminder notification action failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
   }
 
   Future<void> _enqueueSpeech(Future<void> Function() action) {
@@ -589,6 +650,17 @@ class ReminderNotificationService {
     }
   }
 
+  Future<void> _cancelActionAlarms(_NotificationPayload payload) async {
+    final alarmIds = <int>{payload.alarmId};
+    if (payload.reminderId.isNotEmpty) {
+      alarmIds.add(_notificationIdFor(payload.reminderId));
+    }
+
+    for (final alarmId in alarmIds) {
+      await _cancelAlarmById(alarmId);
+    }
+  }
+
   Future<bool> _scheduleAlarm({
     required DateTime notificationTime,
     required int alarmId,
@@ -638,6 +710,75 @@ class ReminderNotificationService {
     final minutes = int.tryParse(match.group(1)!);
     if (minutes == null || minutes < 0) return null;
     return minutes;
+  }
+
+  bool _isCompleted(Map<String, dynamic> reminder) {
+    return reminder['isCompleted'] == true || reminder['is_completed'] == true;
+  }
+
+  bool _isCanceled(Map<String, dynamic> reminder) {
+    return reminder['isCanceled'] == true ||
+        reminder['is_canceled'] == true ||
+        reminder['sync_status'] == 'canceled' ||
+        reminder['sync_status'] == 'cancelled' ||
+        reminder['task_status'] == 'cancelled';
+  }
+
+  Future<void> _rescheduleRepeatingReminder(String reminderId) async {
+    final reminder = await ReminderRepository().loadReminderById(reminderId);
+    if (reminder == null || !_isRepeating(reminder)) return;
+    if (_isCompleted(reminder) || _isCanceled(reminder)) return;
+
+    debugPrint(
+      'Rescheduling next occurrence for repeating reminder $reminderId.',
+    );
+    await scheduleReminder(reminder);
+  }
+
+  bool _isRepeating(Map<String, dynamic> reminder) {
+    final repeatType = reminder['repeat_type']?.toString().toLowerCase();
+    return reminder['isRepeating'] == true ||
+        reminder['is_repeating'] == true ||
+        (repeatType != null && repeatType.isNotEmpty && repeatType != 'none');
+  }
+
+  List<DarwinNotificationCategory> _darwinReminderCategories() {
+    return [
+      _darwinReminderCategory(
+        identifier: _darwinEnglishCategoryId,
+        doneLabel: 'Done',
+        stopLabel: 'Stop Reminder',
+      ),
+      _darwinReminderCategory(
+        identifier: _darwinTagalogCategoryId,
+        doneLabel: 'Tapos Na',
+        stopLabel: 'Ihinto Paalala',
+      ),
+    ];
+  }
+
+  DarwinNotificationCategory _darwinReminderCategory({
+    required String identifier,
+    required String doneLabel,
+    required String stopLabel,
+  }) {
+    return DarwinNotificationCategory(
+      identifier,
+      actions: [
+        DarwinNotificationAction.plain(_doneActionId, doneLabel),
+        DarwinNotificationAction.plain(
+          _stopActionId,
+          stopLabel,
+          options: {DarwinNotificationActionOption.destructive},
+        ),
+      ],
+    );
+  }
+
+  String _currentDarwinCategoryId() {
+    return TtsLanguageService.currentLanguage == AppSpeechLanguage.tagalog
+        ? _darwinTagalogCategoryId
+        : _darwinEnglishCategoryId;
   }
 
   Future<bool> _scheduleLocalNotification({

@@ -99,6 +99,8 @@ class ReminderModel {
         lastOccurrenceDate == _dateKey(DateTime.now());
   }
 
+  bool get isSkippedToday => false;
+
   Map<String, dynamic> toMap() => {
     'id': id,
     'title': title,

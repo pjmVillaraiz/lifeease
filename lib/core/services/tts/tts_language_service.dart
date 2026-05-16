@@ -73,29 +73,73 @@ class TtsLanguageService {
   }
 
   static String descriptionLabel() {
-    return 'Note';
+    return currentLanguage == AppSpeechLanguage.tagalog ? 'Tala' : 'Note';
   }
 
   static String doneActionLabel() {
-    return currentLanguage == AppSpeechLanguage.tagalog ? 'Tapos Na' : 'Done';
+    return currentLanguage == AppSpeechLanguage.tagalog ? 'Tapos' : 'Done';
   }
 
-  static String stopReminderActionLabel() {
-    return currentLanguage == AppSpeechLanguage.tagalog
-        ? 'Ihinto Paalala'
-        : 'Stop Reminder';
+  static String skipActionLabel() {
+    return currentLanguage == AppSpeechLanguage.tagalog ? 'Laktawan' : 'Skip';
   }
 
   static String canceledLabel() {
     return currentLanguage == AppSpeechLanguage.tagalog
-        ? 'Kinansela'
-        : 'Cancelled';
+        ? 'Hindi aktibo'
+        : 'Inactive';
   }
 
   static String notificationTitle() {
     return currentLanguage == AppSpeechLanguage.tagalog
         ? 'LifeEase Paalala'
         : 'LifeEase Reminder';
+  }
+
+  static String reminderSpeech(String title, String description) {
+    final cleanTitle = title.trim();
+    final cleanDescription = description.trim();
+    if (currentLanguage == AppSpeechLanguage.tagalog) {
+      final body = cleanTitle.isEmpty
+          ? 'May paalala ka ngayon'
+          : _tagalogReminderBody(cleanTitle);
+      if (cleanDescription.isEmpty) return 'Paalala: $body.';
+      return 'Paalala: $body. Tala: $cleanDescription.';
+    }
+
+    final body = cleanTitle.isEmpty
+        ? 'You have a reminder now'
+        : _englishReminderBody(cleanTitle);
+    if (cleanDescription.isEmpty) return 'Reminder: $body.';
+    return 'Reminder: $body. Note: $cleanDescription.';
+  }
+
+  static String _englishReminderBody(String title) {
+    final lower = title.toLowerCase();
+    if (lower.startsWith('take ') ||
+        lower.startsWith('drink ') ||
+        lower.startsWith('eat ') ||
+        lower.startsWith('call ') ||
+        lower.startsWith('go ') ||
+        lower.startsWith('check ')) {
+      return '$title now';
+    }
+    return title;
+  }
+
+  static String _tagalogReminderBody(String title) {
+    final lower = title.toLowerCase();
+    if (lower.contains('gamot') || lower.contains('medicine')) {
+      return 'Inumin mo na ang iyong gamot';
+    }
+    if (lower.startsWith('uminom') ||
+        lower.startsWith('inumin') ||
+        lower.startsWith('kumain') ||
+        lower.startsWith('tawagan') ||
+        lower.startsWith('pumunta')) {
+      return '$title na';
+    }
+    return title;
   }
 
   static Future<String?> _bestAvailableLocaleFor(

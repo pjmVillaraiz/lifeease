@@ -131,11 +131,6 @@ class ReminderRepository {
     final id = reminder['id']?.toString();
     if (id == null) return;
 
-    if (_isRepeating(reminder)) {
-      await _markRepeatingOccurrence(reminder, 'cancelled');
-      return;
-    }
-
     final updated = {
       ...reminder,
       'is_completed': false,
@@ -173,6 +168,106 @@ class ReminderRepository {
     await markReminderCanceled(existing ?? {'id': id});
   }
 
+  Future<void> markReminderSkipped(Map<String, dynamic> reminder) async {
+    final id = reminder['id']?.toString();
+    if (id == null) return;
+
+    if (_isRepeating(reminder)) {
+      await _markRepeatingOccurrence(reminder, 'skipped');
+      return;
+    }
+
+    final updated = {
+      ...reminder,
+      'is_completed': false,
+      'isCompleted': false,
+      'is_canceled': false,
+      'isCanceled': false,
+      'task_status': 'skipped',
+      'last_occurrence_status': 'skipped',
+      'last_occurrence_date': _dateKey(DateTime.now()),
+      'last_occurrence_at': DateTime.now().toIso8601String(),
+      'skipped_at': DateTime.now().toIso8601String(),
+      'sync_status': 'queued',
+    };
+    await _offline.saveReminder(updated);
+    notifyChanged();
+
+    final client = _client;
+    if (client == null || id.length != 36) return;
+    try {
+      await client
+          .from('reminders')
+          .upsert(
+            _remoteReminder({...updated, 'sync_status': 'synced'}, client),
+          );
+      await _offline.saveReminder({...updated, 'sync_status': 'synced'});
+      notifyChanged();
+    } catch (_) {
+      await _offline.saveReminder(updated);
+    }
+  }
+
+  Future<void> markReminderSkippedById(String id) async {
+    final reminders = await loadReminders();
+    final existing = reminders.cast<Map<String, dynamic>?>().firstWhere(
+      (reminder) => reminder?['id']?.toString() == id,
+      orElse: () => null,
+    );
+
+    await markReminderSkipped(existing ?? {'id': id});
+  }
+
+  Future<void> markReminderMissed(Map<String, dynamic> reminder) async {
+    final id = reminder['id']?.toString();
+    if (id == null) return;
+
+    if (_isRepeating(reminder)) {
+      await _markRepeatingOccurrence(reminder, 'missed');
+      return;
+    }
+
+    final updated = {
+      ...reminder,
+      'is_completed': false,
+      'isCompleted': false,
+      'is_canceled': false,
+      'isCanceled': false,
+      'task_status': 'missed',
+      'last_occurrence_status': 'missed',
+      'last_occurrence_date': _dateKey(DateTime.now()),
+      'last_occurrence_at': DateTime.now().toIso8601String(),
+      'missed_at': DateTime.now().toIso8601String(),
+      'sync_status': 'queued',
+    };
+    await _offline.saveReminder(updated);
+    notifyChanged();
+
+    final client = _client;
+    if (client == null || id.length != 36) return;
+    try {
+      await client
+          .from('reminders')
+          .upsert(
+            _remoteReminder({...updated, 'sync_status': 'synced'}, client),
+          );
+      await _offline.saveReminder({...updated, 'sync_status': 'synced'});
+      notifyChanged();
+    } catch (_) {
+      await _offline.saveReminder(updated);
+    }
+  }
+
+  Future<void> markReminderMissedById(String id) async {
+    final reminders = await loadReminders();
+    final existing = reminders.cast<Map<String, dynamic>?>().firstWhere(
+      (reminder) => reminder?['id']?.toString() == id,
+      orElse: () => null,
+    );
+
+    await markReminderMissed(existing ?? {'id': id});
+  }
+
   Stream<List<Map<String, dynamic>>> watchReminders() {
     final client = _client;
     if (client == null) return const Stream.empty();
@@ -203,7 +298,7 @@ class ReminderRepository {
           }
           continue;
         }
-        if (_isCancelled(reminder) && !_isRepeating(reminder)) {
+        if (_isCancelled(reminder)) {
           final id = reminder['id']?.toString();
           if (id != null && id.length == 36) {
             await client
@@ -253,6 +348,8 @@ class ReminderRepository {
           syncStatus == 'canceled' ||
           syncStatus == 'cancelled' ||
           reminder['task_status'] == 'cancelled' ||
+          reminder['task_status'] == 'skipped' ||
+          reminder['task_status'] == 'missed' ||
           reminder['last_occurrence_status'] != null ||
           reminder['is_completed'] == true ||
           reminder['isCompleted'] == true ||
@@ -303,8 +400,8 @@ class ReminderRepository {
       'last_occurrence_at': DateTime.now().toIso8601String(),
       if (status == 'completed')
         'completed_at': DateTime.now().toIso8601String(),
-      if (status == 'cancelled')
-        'canceled_at': DateTime.now().toIso8601String(),
+      if (status == 'skipped') 'skipped_at': DateTime.now().toIso8601String(),
+      if (status == 'missed') 'missed_at': DateTime.now().toIso8601String(),
       if (nextScheduledAt != null)
         'reminder_time': nextScheduledAt.toIso8601String(),
       if (nextScheduledAt != null)
@@ -373,6 +470,8 @@ class ReminderRepository {
         return 60;
       case 'daily':
         return 1440;
+      case 'twice_monthly':
+        return 21600;
       case 'weekly':
         return 10080;
       case 'monthly':
@@ -424,6 +523,7 @@ class ReminderRepository {
       'is_completed': reminder['is_completed'] ?? false,
       'language': reminder['language'] ?? 'en',
       'sync_status': reminder['sync_status'] ?? 'synced',
+      'task_status': reminder['task_status'] ?? 'active',
     };
   }
 }

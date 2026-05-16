@@ -6,9 +6,26 @@ import 'package:lifeease/shared/widgets/custom_icon_widget.dart';
 
 class _RepeatInterval {
   final int minutes;
-  final String label;
+  final String englishLabel;
+  final String tagalogLabel;
 
-  const _RepeatInterval(this.minutes, this.label);
+  const _RepeatInterval(this.minutes, this.englishLabel, this.tagalogLabel);
+}
+
+class _FrequencyOption {
+  final String id;
+  final int minutes;
+  final bool repeats;
+  final String englishLabel;
+  final String tagalogLabel;
+
+  const _FrequencyOption({
+    required this.id,
+    required this.minutes,
+    required this.repeats,
+    required this.englishLabel,
+    required this.tagalogLabel,
+  });
 }
 
 class RepeatSettingsWidget extends StatelessWidget {
@@ -25,24 +42,79 @@ class RepeatSettingsWidget extends StatelessWidget {
     required this.onIntervalChanged,
   });
 
-  static const _intervals = [
-    _RepeatInterval(0, 'Every 30 seconds'),
-    _RepeatInterval(1, 'Every 1 minute'),
-    _RepeatInterval(5, 'Every 5 minutes'),
-    _RepeatInterval(15, 'Every 15 minutes'),
-    _RepeatInterval(30, 'Every 30 minutes'),
-    _RepeatInterval(60, 'Every hour'),
-    _RepeatInterval(120, 'Every 2 hours'),
-    _RepeatInterval(1440, 'Daily'),
+  static const _frequencies = [
+    _FrequencyOption(
+      id: 'once',
+      minutes: 0,
+      repeats: false,
+      englishLabel: 'One time only',
+      tagalogLabel: 'Isang beses lang',
+    ),
+    _FrequencyOption(
+      id: 'daily',
+      minutes: 1440,
+      repeats: true,
+      englishLabel: 'Every day',
+      tagalogLabel: 'Araw-araw',
+    ),
+    _FrequencyOption(
+      id: 'morning_evening',
+      minutes: 720,
+      repeats: true,
+      englishLabel: 'Morning and evening',
+      tagalogLabel: 'Umaga at gabi',
+    ),
+    _FrequencyOption(
+      id: 'weekly',
+      minutes: 10080,
+      repeats: true,
+      englishLabel: 'Every week',
+      tagalogLabel: 'Linggo-linggo',
+    ),
+    _FrequencyOption(
+      id: 'monthly',
+      minutes: 43200,
+      repeats: true,
+      englishLabel: 'Every month',
+      tagalogLabel: 'Buwan-buwan',
+    ),
+    _FrequencyOption(
+      id: 'twice_monthly',
+      minutes: 21600,
+      repeats: true,
+      englishLabel: 'Twice a month',
+      tagalogLabel: 'Dalawang beses sa isang buwan',
+    ),
+    _FrequencyOption(
+      id: 'custom',
+      minutes: 60,
+      repeats: true,
+      englishLabel: 'Custom',
+      tagalogLabel: 'Sarili mong iskedyul',
+    ),
+  ];
+
+  static const _customIntervals = [
+    _RepeatInterval(15, 'Very often', 'Madalas na madalas'),
+    _RepeatInterval(30, 'Often', 'Madalas'),
+    _RepeatInterval(60, 'About every hour', 'Halos bawat oras'),
+    _RepeatInterval(120, 'Every two hours', 'Kada dalawang oras'),
+    _RepeatInterval(240, 'Every four hours', 'Kada apat na oras'),
+    _RepeatInterval(360, 'Every six hours', 'Kada anim na oras'),
+    _RepeatInterval(480, 'Three times a day', 'Tatlong beses sa isang araw'),
   ];
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isTagalog =
+        TtsLanguageService.currentLanguage == AppSpeechLanguage.tagalog;
+    final selectedFrequencyId = _selectedFrequencyId;
+    final showCustom = selectedFrequencyId == 'custom';
 
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Repeat toggle row
         Row(
           children: [
             Container(
@@ -67,7 +139,9 @@ class RepeatSettingsWidget extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Repeat ${TtsLanguageService.reminderLabel()}',
+                    isTagalog
+                        ? 'Gaano kadalas kang papaalalahanan ng LifeEase?'
+                        : 'How often should LifeEase remind you?',
                     style: GoogleFonts.nunitoSans(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
@@ -75,7 +149,9 @@ class RepeatSettingsWidget extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    'Automatically reschedule after each alert',
+                    isTagalog
+                        ? 'Pumili ng malinaw na iskedyul para sa paalala.'
+                        : 'Choose a simple schedule for this reminder.',
                     style: GoogleFonts.nunitoSans(
                       fontSize: 13,
                       color: theme.colorScheme.outline,
@@ -84,87 +160,108 @@ class RepeatSettingsWidget extends StatelessWidget {
                 ],
               ),
             ),
-            Switch(
-              value: isRepeating,
-              onChanged: onRepeatingChanged,
-              activeThumbColor: AppTheme.primaryBlue,
-            ),
           ],
         ),
-        // Interval selector (visible when repeating is ON)
+        const SizedBox(height: 14),
+        _buildDropdown<String>(
+          theme: theme,
+          value: selectedFrequencyId,
+          items: _frequencies.map((option) {
+            return DropdownMenuItem<String>(
+              value: option.id,
+              child: Text(_optionLabel(option, isTagalog)),
+            );
+          }).toList(),
+          onChanged: (value) {
+            if (value == null) return;
+            final option = _frequencies.firstWhere((item) => item.id == value);
+            onRepeatingChanged(option.repeats);
+            onIntervalChanged(option.minutes);
+          },
+        ),
         AnimatedCrossFade(
-          duration: const Duration(milliseconds: 250),
-          crossFadeState: isRepeating
+          duration: const Duration(milliseconds: 200),
+          crossFadeState: showCustom
               ? CrossFadeState.showSecond
               : CrossFadeState.showFirst,
-          firstChild: const SizedBox(height: 0),
+          firstChild: const SizedBox.shrink(),
           secondChild: Padding(
-            padding: const EdgeInsets.only(top: 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Repeat Every',
-                  style: GoogleFonts.nunitoSans(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: theme.colorScheme.outline,
+            padding: const EdgeInsets.only(top: 12),
+            child: _buildDropdown<int>(
+              theme: theme,
+              value: _customIntervalValue,
+              items: _customIntervals.map((interval) {
+                return DropdownMenuItem<int>(
+                  value: interval.minutes,
+                  child: Text(
+                    isTagalog ? interval.tagalogLabel : interval.englishLabel,
                   ),
-                ),
-                const SizedBox(height: 10),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: theme.colorScheme.outlineVariant,
-                      width: 1,
-                    ),
-                  ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<int>(
-                      value: repeatIntervalMinutes,
-                      isExpanded: true,
-                      icon: CustomIconWidget(
-                        iconName: 'expand_more',
-                        color: theme.colorScheme.outline,
-                        size: 22,
-                      ),
-                      style: GoogleFonts.nunitoSans(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: theme.colorScheme.onSurface,
-                      ),
-                      dropdownColor: theme.colorScheme.surface,
-                      borderRadius: BorderRadius.circular(14),
-                      onChanged: (v) {
-                        if (v != null) onIntervalChanged(v);
-                      },
-                      items: _intervals.map((interval) {
-                        return DropdownMenuItem<int>(
-                          value: interval.minutes,
-                          child: Text(
-                            interval.label,
-                            style: GoogleFonts.nunitoSans(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: theme.colorScheme.onSurface,
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                ),
-              ],
+                );
+              }).toList(),
+              onChanged: (value) {
+                if (value != null) onIntervalChanged(value);
+              },
             ),
           ),
         ),
       ],
+    );
+  }
+
+  String get _selectedFrequencyId {
+    if (!isRepeating) return 'once';
+    for (final option in _frequencies) {
+      if (option.id != 'custom' && option.minutes == repeatIntervalMinutes) {
+        return option.id;
+      }
+    }
+    return 'custom';
+  }
+
+  int get _customIntervalValue {
+    for (final interval in _customIntervals) {
+      if (interval.minutes == repeatIntervalMinutes) return interval.minutes;
+    }
+    return _customIntervals.first.minutes;
+  }
+
+  String _optionLabel(_FrequencyOption option, bool isTagalog) {
+    return isTagalog ? option.tagalogLabel : option.englishLabel;
+  }
+
+  Widget _buildDropdown<T>({
+    required ThemeData theme,
+    required T value,
+    required List<DropdownMenuItem<T>> items,
+    required ValueChanged<T?> onChanged,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: theme.colorScheme.outlineVariant, width: 1),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<T>(
+          value: value,
+          isExpanded: true,
+          icon: CustomIconWidget(
+            iconName: 'expand_more',
+            color: theme.colorScheme.outline,
+            size: 22,
+          ),
+          style: GoogleFonts.nunitoSans(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: theme.colorScheme.onSurface,
+          ),
+          dropdownColor: theme.colorScheme.surface,
+          borderRadius: BorderRadius.circular(14),
+          onChanged: onChanged,
+          items: items,
+        ),
+      ),
     );
   }
 }

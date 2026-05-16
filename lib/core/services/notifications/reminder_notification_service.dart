@@ -63,11 +63,14 @@ class ReminderNotificationService {
   static const String _channelDescription =
       'Alerts for scheduled LifeEase reminders.';
   static const String _doneActionId = 'mark_done';
-  static const String _stopActionId = 'stop_repeating';
+  static const String _skipActionId = 'skip_occurrence';
   static const String _darwinEnglishCategoryId = 'lifeease_reminder_actions_en';
   static const String _darwinTagalogCategoryId = 'lifeease_reminder_actions_tl';
   static const String _repeatConfigPrefix = 'lifeease.reminder.repeat.';
   static const String _scheduledIdsKey = 'lifeease.reminder.scheduled_ids';
+  static const Duration _lateReminderGrace = Duration(minutes: 5);
+  static const Duration _ignoredRetryDelay = Duration(minutes: 1);
+  static const int _maxIgnoredRetries = 3;
 
   Future<void> initialize({bool requestPermissions = true}) async {
     if (_initialized) return;
@@ -115,7 +118,10 @@ class ReminderNotificationService {
       }
       return;
     }
-    if (_isCompleted(reminder) || _isCanceled(reminder)) {
+    if (_isCompleted(reminder) ||
+        _isCanceled(reminder) ||
+        _isSkipped(reminder) ||
+        _isMissed(reminder)) {
       await cancelReminder(id);
       return;
     }
@@ -133,17 +139,48 @@ class ReminderNotificationService {
     if (id == null || id.isEmpty || title == null || title.isEmpty) return;
     if (scheduledAt == null) return;
 
+    final notificationId = _notificationIdFor(id);
+    final params = _alarmParamsFor(reminder);
+    final now = DateTime.now();
+    if (_shouldFireImmediately(scheduledAt, now)) {
+      debugPrint(
+        'Reminder "$title" is slightly late; firing immediately instead of '
+        'skipping.',
+      );
+      await _cancelAlarmById(notificationId, removeTracking: false);
+      await handleAlarmFired(notificationId, params);
+      return;
+    }
+
     final notificationTime = _notificationTimeFor(
       scheduledAt,
       isRepeating: isRepeating,
       repeatIntervalMinutes: repeatIntervalMinutes,
     );
-    if (!notificationTime.isAfter(DateTime.now())) {
-      debugPrint('Reminder scheduling skipped: computed time is in the past.');
+    if (!notificationTime.isAfter(now)) {
+      if (!isRepeating) {
+        debugPrint(
+          'Reminder "$title" was missed outside the '
+          '${_lateReminderGrace.inMinutes}-minute grace window.',
+        );
+        await ReminderRepository().markReminderMissed(reminder);
+        await cancelReminder(id);
+        return;
+      }
+
+      debugPrint(
+        'Repeating reminder "$title" computed a past notification time; '
+        'marking this occurrence missed before the next occurrence.',
+      );
+      final repository = ReminderRepository();
+      await repository.markReminderMissed(reminder);
+      final updated = await repository.loadReminderById(id);
+      if (updated != null) {
+        await scheduleReminder(updated);
+      }
       return;
     }
 
-    final notificationId = _notificationIdFor(id);
     final canScheduleExactAlarms = await _canScheduleExactAlarms();
     if (!canScheduleExactAlarms) {
       debugPrint(
@@ -153,7 +190,6 @@ class ReminderNotificationService {
 
     await _cancelAlarmById(notificationId, removeTracking: false);
 
-    final params = _alarmParamsFor(reminder);
     final scheduled = await _scheduleAlarm(
       notificationTime: notificationTime,
       alarmId: notificationId,
@@ -287,11 +323,10 @@ class ReminderNotificationService {
           semanticAction: SemanticAction.markAsRead,
         ),
         AndroidNotificationAction(
-          _stopActionId,
-          TtsLanguageService.stopReminderActionLabel(),
-          titleColor: const Color(0xFFD32F2F),
+          _skipActionId,
+          TtsLanguageService.skipActionLabel(),
+          titleColor: const Color(0xFF1565C0),
           cancelNotification: true,
-          semanticAction: SemanticAction.delete,
         ),
       ],
     );
@@ -328,6 +363,11 @@ class ReminderNotificationService {
     return scheduledAt;
   }
 
+  bool _shouldFireImmediately(DateTime scheduledAt, DateTime now) {
+    if (scheduledAt.isAfter(now)) return false;
+    return now.difference(scheduledAt) <= _lateReminderGrace;
+  }
+
   Duration _leadDuration(String value) {
     final normalized = value.toLowerCase().trim();
     final number = int.tryParse(RegExp(r'\d+').stringMatch(normalized) ?? '');
@@ -348,16 +388,9 @@ class ReminderNotificationService {
   }
 
   String _spokenTextFor(Map<String, dynamic> reminder) {
-    final reminderLabel = TtsLanguageService.reminderLabel();
-    final descriptionLabel = TtsLanguageService.descriptionLabel();
     final title = reminder['title']?.toString().trim() ?? '';
     final description = reminder['description']?.toString().trim() ?? '';
-
-    if (description.isEmpty) {
-      return '$reminderLabel: $title.';
-    }
-
-    return '$reminderLabel: $title. $descriptionLabel: $description.';
+    return TtsLanguageService.reminderSpeech(title, description);
   }
 
   Map<String, dynamic> _alarmParamsFor(Map<String, dynamic> reminder) {
@@ -374,6 +407,10 @@ class ReminderNotificationService {
       'repeatIntervalMinutes': _repeatIntervalMinutes(reminder),
       'priority': reminder['priority']?.toString(),
       'language': reminder['language']?.toString(),
+      'retryCount': reminder['retryCount'] is int
+          ? reminder['retryCount']
+          : int.tryParse(reminder['retryCount']?.toString() ?? '') ?? 0,
+      'markMissedOnFire': reminder['markMissedOnFire'] == true,
     };
   }
 
@@ -394,6 +431,8 @@ class ReminderNotificationService {
         return 60;
       case 'daily':
         return 1440;
+      case 'twice_monthly':
+        return 21600;
       case 'weekly':
         return 10080;
       case 'monthly':
@@ -414,10 +453,13 @@ class ReminderNotificationService {
     if (id != null && id.isNotEmpty) {
       final latestReminder = await ReminderRepository().loadReminderById(id);
       if (latestReminder != null &&
-          (_isCompleted(latestReminder) || _isCanceled(latestReminder))) {
+          (_isCompleted(latestReminder) ||
+              _isCanceled(latestReminder) ||
+              _isSkipped(latestReminder) ||
+              _isMissed(latestReminder))) {
         debugPrint(
           'Reminder alarm $alarmId ignored because reminder $id is already '
-          'completed or cancelled.',
+          'completed, skipped, cancelled, or missed.',
         );
         await _cancelAlarmById(alarmId);
         return;
@@ -429,11 +471,10 @@ class ReminderNotificationService {
     );
     if (scheduledAt == null) return;
 
-    final isRepeating =
-        reminder['isRepeating'] == true ||
-        reminder['is_repeating'] == true ||
-        (reminder['repeat_type']?.toString() ?? '').toLowerCase() != 'none';
-    final repeatIntervalMinutes = _repeatIntervalMinutes(reminder);
+    if (reminder['markMissedOnFire'] == true) {
+      await _markReminderMissedIfStillPending(alarmId, reminder);
+      return;
+    }
 
     try {
       await _showReminderNotification(alarmId, reminder, scheduledAt);
@@ -442,40 +483,10 @@ class ReminderNotificationService {
       debugPrintStack(stackTrace: stackTrace);
     }
 
-    if (isRepeating && repeatIntervalMinutes >= 0) {
-      final interval = _repeatIntervalDuration(repeatIntervalMinutes);
-      final nextScheduledAt = scheduledAt.add(interval);
-      final nextNotificationTime = _notificationTimeFor(
-        nextScheduledAt,
-        isRepeating: true,
-        repeatIntervalMinutes: repeatIntervalMinutes,
-      );
-
-      final nextReminder = Map<String, dynamic>.from(reminder)
-        ..['reminder_time'] = nextScheduledAt.toIso8601String()
-        ..['scheduledTimeMillis'] = nextScheduledAt.millisecondsSinceEpoch;
-
-      await _saveRepeatConfig(alarmId, nextReminder);
-      final scheduled = await _scheduleAlarm(
-        notificationTime: nextNotificationTime,
-        alarmId: alarmId,
-        params: nextReminder,
-      );
-      if (!scheduled) {
-        debugPrint(
-          'Repeating reminder reschedule failed for alarm $alarmId at '
-          '${nextNotificationTime.toIso8601String()}.',
-        );
-      }
-    } else {
-      await _removeScheduledId(alarmId);
-      await _removeRepeatConfig(alarmId);
-    }
+    await _scheduleIgnoredRetryOrMiss(alarmId: alarmId, reminder: reminder);
 
     try {
-      if (SettingsController.instance.soundEnabled) {
-        await _speakReminder(reminder);
-      }
+      await _speakReminder(reminder);
     } catch (error, stackTrace) {
       debugPrint('Reminder speech failed: $error');
       debugPrintStack(stackTrace: stackTrace);
@@ -485,7 +496,7 @@ class ReminderNotificationService {
   Future<void> handleNotificationResponse(NotificationResponse response) async {
     await initialize(requestPermissions: false);
 
-    if (response.actionId != _stopActionId &&
+    if (response.actionId != _skipActionId &&
         response.actionId != _doneActionId) {
       return;
     }
@@ -574,15 +585,75 @@ class ReminderNotificationService {
         return;
       }
 
-      if (actionId == _stopActionId) {
-        await repository.markReminderCanceledById(payload.reminderId);
+      if (actionId == _skipActionId) {
+        await repository.markReminderSkippedById(payload.reminderId);
         await _rescheduleRepeatingReminder(payload.reminderId);
-        debugPrint('Reminder ${payload.reminderId} marked canceled.');
+        debugPrint('Reminder ${payload.reminderId} skipped for now.');
+        return;
       }
     } catch (error, stackTrace) {
       debugPrint('Reminder notification action failed: $error');
       debugPrintStack(stackTrace: stackTrace);
     }
+  }
+
+  Future<void> _scheduleIgnoredRetryOrMiss({
+    required int alarmId,
+    required Map<String, dynamic> reminder,
+  }) async {
+    final id = reminder['id']?.toString();
+    if (id == null || id.isEmpty) return;
+
+    final retryCount = reminder['retryCount'] is int
+        ? reminder['retryCount'] as int
+        : int.tryParse(reminder['retryCount']?.toString() ?? '') ?? 0;
+    final nextReminder = Map<String, dynamic>.from(reminder);
+    if (retryCount < _maxIgnoredRetries) {
+      nextReminder
+        ..['retryCount'] = retryCount + 1
+        ..['markMissedOnFire'] = false;
+    } else {
+      nextReminder
+        ..['retryCount'] = retryCount
+        ..['markMissedOnFire'] = true;
+    }
+
+    final scheduled = await _scheduleAlarm(
+      notificationTime: DateTime.now().add(_ignoredRetryDelay),
+      alarmId: alarmId,
+      params: nextReminder,
+    );
+    if (!scheduled) {
+      debugPrint('Ignored reminder retry scheduling failed for $id.');
+      return;
+    }
+    await _addScheduledId(alarmId);
+  }
+
+  Future<void> _markReminderMissedIfStillPending(
+    int alarmId,
+    Map<String, dynamic> reminder,
+  ) async {
+    final id = reminder['id']?.toString();
+    if (id == null || id.isEmpty) return;
+
+    final repository = ReminderRepository();
+    final latestReminder = await repository.loadReminderById(id);
+    if (latestReminder != null &&
+        (_isCompleted(latestReminder) ||
+            _isCanceled(latestReminder) ||
+            _isSkipped(latestReminder) ||
+            _isMissed(latestReminder))) {
+      await _cancelAlarmById(alarmId);
+      return;
+    }
+
+    await repository.markReminderMissedById(id);
+    await _plugin.cancel(id: alarmId);
+    await _removeScheduledId(alarmId);
+    await _removeRepeatConfig(alarmId);
+    await _rescheduleRepeatingReminder(id);
+    debugPrint('Reminder $id marked missed after ignored retries.');
   }
 
   Future<void> _enqueueSpeech(Future<void> Function() action) {
@@ -724,6 +795,14 @@ class ReminderNotificationService {
         reminder['task_status'] == 'cancelled';
   }
 
+  bool _isSkipped(Map<String, dynamic> reminder) {
+    return reminder['task_status'] == 'skipped' && !_isRepeating(reminder);
+  }
+
+  bool _isMissed(Map<String, dynamic> reminder) {
+    return reminder['task_status'] == 'missed' && !_isRepeating(reminder);
+  }
+
   Future<void> _rescheduleRepeatingReminder(String reminderId) async {
     final reminder = await ReminderRepository().loadReminderById(reminderId);
     if (reminder == null || !_isRepeating(reminder)) return;
@@ -747,12 +826,12 @@ class ReminderNotificationService {
       _darwinReminderCategory(
         identifier: _darwinEnglishCategoryId,
         doneLabel: 'Done',
-        stopLabel: 'Stop Reminder',
+        skipLabel: 'Skip',
       ),
       _darwinReminderCategory(
         identifier: _darwinTagalogCategoryId,
-        doneLabel: 'Tapos Na',
-        stopLabel: 'Ihinto Paalala',
+        doneLabel: 'Tapos',
+        skipLabel: 'Laktawan',
       ),
     ];
   }
@@ -760,17 +839,13 @@ class ReminderNotificationService {
   DarwinNotificationCategory _darwinReminderCategory({
     required String identifier,
     required String doneLabel,
-    required String stopLabel,
+    required String skipLabel,
   }) {
     return DarwinNotificationCategory(
       identifier,
       actions: [
         DarwinNotificationAction.plain(_doneActionId, doneLabel),
-        DarwinNotificationAction.plain(
-          _stopActionId,
-          stopLabel,
-          options: {DarwinNotificationActionOption.destructive},
-        ),
+        DarwinNotificationAction.plain(_skipActionId, skipLabel),
       ],
     );
   }

@@ -102,7 +102,7 @@ class _AddReminderScreenState extends State<AddReminderScreen>
       _isRepeating =
           editReminder['isRepeating'] as bool? ??
           editReminder['is_repeating'] as bool? ??
-          editReminder['repeat_type']?.toString() != 'none';
+          ((editReminder['repeat_type']?.toString() ?? 'none') != 'none');
       _repeatIntervalMinutes =
           editReminder['repeatIntervalMinutes'] as int? ??
           _repeatMinutesFromType(editReminder['repeat_type']?.toString());
@@ -370,9 +370,9 @@ class _AddReminderScreenState extends State<AddReminderScreen>
   }
 
   String _repeatTypeFromMinutes() {
-    if (_repeatIntervalMinutes >= 43200) return 'monthly';
-    if (_repeatIntervalMinutes >= 10080) return 'weekly';
-    if (_repeatIntervalMinutes >= 1440) return 'daily';
+    if (_repeatIntervalMinutes == 43200) return 'monthly';
+    if (_repeatIntervalMinutes == 10080) return 'weekly';
+    if (_repeatIntervalMinutes == 1440) return 'daily';
     return 'custom:$_repeatIntervalMinutes';
   }
 
@@ -387,6 +387,8 @@ class _AddReminderScreenState extends State<AddReminderScreen>
     switch (repeatType) {
       case 'daily':
         return 1440;
+      case 'twice_monthly':
+        return 21600;
       case 'weekly':
         return 10080;
       case 'monthly':
@@ -740,7 +742,7 @@ class _AddReminderScreenState extends State<AddReminderScreen>
 
   Widget _buildRepeatSection(ThemeData theme) {
     return FormSectionCardWidget(
-      title: 'Repeat',
+      title: 'Frequency',
       child: RepeatSettingsWidget(
         isRepeating: _isRepeating,
         repeatIntervalMinutes: _repeatIntervalMinutes,

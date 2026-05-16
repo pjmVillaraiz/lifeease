@@ -29,6 +29,8 @@ class ReminderModel {
   final int scheduledTimeMillis;
   final bool isCompleted;
   final bool isCanceled;
+  final bool isSkipped;
+  final bool isMissed;
   final bool isRepeating;
   final int repeatIntervalMinutes;
   final String category;
@@ -45,6 +47,8 @@ class ReminderModel {
     required this.scheduledTimeMillis,
     required this.isCompleted,
     required this.isCanceled,
+    required this.isSkipped,
+    required this.isMissed,
     required this.isRepeating,
     required this.repeatIntervalMinutes,
     required this.category,
@@ -69,9 +73,17 @@ class ReminderModel {
       isCanceled:
           map['isCanceled'] as bool? ??
           map['is_canceled'] as bool? ??
-          map['sync_status'] == 'canceled' ||
+          (map['sync_status'] == 'canceled' ||
               map['sync_status'] == 'cancelled' ||
-              map['task_status'] == 'cancelled',
+              map['task_status'] == 'cancelled'),
+      isSkipped:
+          map['isSkipped'] as bool? ??
+          (map['task_status'] == 'skipped' ||
+              map['last_occurrence_status'] == 'skipped'),
+      isMissed:
+          map['isMissed'] as bool? ??
+          (map['task_status'] == 'missed' ||
+              map['last_occurrence_status'] == 'missed'),
       isRepeating:
           map['isRepeating'] as bool? ??
           ((map['repeat_type']?.toString() ?? '').isNotEmpty &&
@@ -99,18 +111,43 @@ class ReminderModel {
         lastOccurrenceDate == _dateKey(DateTime.now());
   }
 
-  bool get isSkippedToday => false;
+  bool get isSkippedToday {
+    if (isSkipped && !isRepeating) return true;
+    return (isSkipped || lastOccurrenceStatus == 'skipped') &&
+        lastOccurrenceDate == _dateKey(DateTime.now());
+  }
+
+  bool get isMissedToday {
+    if (isMissed && !isRepeating) return true;
+    return (isMissed || lastOccurrenceStatus == 'missed') &&
+        lastOccurrenceDate == _dateKey(DateTime.now());
+  }
 
   Map<String, dynamic> toMap() => {
     'id': id,
     'title': title,
     'description': description,
     'scheduledTimeMillis': scheduledTimeMillis,
+    'reminder_time': DateTime.fromMillisecondsSinceEpoch(
+      scheduledTimeMillis,
+    ).toIso8601String(),
     'isCompleted': isCompleted,
     'isCanceled': isCanceled,
     'is_canceled': isCanceled,
+    'isSkipped': isSkipped,
+    'isMissed': isMissed,
+    'task_status': isCanceled
+        ? 'cancelled'
+        : isSkipped
+        ? 'skipped'
+        : isMissed
+        ? 'missed'
+        : 'active',
     'isRepeating': isRepeating,
     'repeatIntervalMinutes': repeatIntervalMinutes,
+    'repeat_type': isRepeating
+        ? _repeatTypeFromMinutes(repeatIntervalMinutes)
+        : 'none',
     'category': category,
     'userUid': userUid,
     'createdAt': createdAt,
@@ -141,6 +178,8 @@ class ReminderModel {
     switch (repeatType) {
       case 'daily':
         return 1440;
+      case 'twice_monthly':
+        return 21600;
       case 'weekly':
         return 10080;
       case 'monthly':
@@ -148,6 +187,14 @@ class ReminderModel {
       default:
         return 0;
     }
+  }
+
+  static String _repeatTypeFromMinutes(int minutes) {
+    if (minutes == 43200) return 'monthly';
+    if (minutes == 21600) return 'twice_monthly';
+    if (minutes == 10080) return 'weekly';
+    if (minutes == 1440) return 'daily';
+    return 'custom:$minutes';
   }
 
   static String _dateKey(DateTime date) {
@@ -279,9 +326,17 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _markComplete(ReminderModel reminder) async {
-    setState(() => _reminders.removeWhere((r) => r.id == reminder.id));
     await _reminderRepository.markReminderComplete(reminder.toMap());
-    await ReminderNotificationService.instance.cancelReminder(reminder.id);
+    if (reminder.isRepeating) {
+      final updated = await _reminderRepository.loadReminderById(reminder.id);
+      if (updated != null) {
+        await ReminderNotificationService.instance.scheduleReminder(updated);
+      }
+      await _loadReminders(showLoading: false);
+    } else {
+      setState(() => _reminders.removeWhere((r) => r.id == reminder.id));
+      await ReminderNotificationService.instance.cancelReminder(reminder.id);
+    }
     HapticFeedback.mediumImpact();
   }
 
@@ -693,7 +748,11 @@ class _HomeScreenState extends State<HomeScreen>
     final pendingCount = _reminders
         .where(
           (r) =>
-              !r.isCompleted && !r.isCanceled && r.scheduledTimeMillis >= now,
+              !r.isCompleted &&
+              !r.isCanceled &&
+              !r.isSkipped &&
+              !r.isMissed &&
+              r.scheduledTimeMillis >= now,
         )
         .length;
     final completedCount = _reminders
@@ -701,12 +760,16 @@ class _HomeScreenState extends State<HomeScreen>
         .length;
     final missedCount = _reminders
         .where(
-          (r) => !r.isCompleted && !r.isCanceled && r.scheduledTimeMillis < now,
+          (r) =>
+              !r.isCompleted &&
+              !r.isCanceled &&
+              !r.isSkipped &&
+              !r.isMissed &&
+              r.scheduledTimeMillis < now,
         )
         .length;
-    final cancelledCount = _reminders
-        .where((r) => r.isCanceled || r.isCanceledToday)
-        .length;
+    final skippedCount = _reminders.where((r) => r.isSkippedToday).length;
+    final missedStatusCount = _reminders.where((r) => r.isMissedToday).length;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -743,22 +806,22 @@ class _HomeScreenState extends State<HomeScreen>
               Expanded(
                 child: _buildStatusCard(
                   theme,
-                  title: tr(isTagalog, 'Missed', 'Nalagpasan'),
-                  count: missedCount,
-                  icon: Icons.error_outline,
-                  color: Colors.red.shade100,
-                  iconColor: Colors.red.shade800,
+                  title: tr(isTagalog, 'Skipped', 'Nilaktawan'),
+                  count: skippedCount,
+                  icon: Icons.skip_next_outlined,
+                  color: Colors.blue.shade100,
+                  iconColor: Colors.blue.shade800,
                 ),
               ),
               const SizedBox(width: 16),
               Expanded(
                 child: _buildStatusCard(
                   theme,
-                  title: tr(isTagalog, 'Cancelled', 'Kinansela'),
-                  count: cancelledCount,
-                  icon: Icons.cancel_outlined,
-                  color: Colors.grey.shade300,
-                  iconColor: Colors.grey.shade800,
+                  title: tr(isTagalog, 'Missed', 'Nalagpasan'),
+                  count: missedStatusCount + missedCount,
+                  icon: Icons.error_outline,
+                  color: Colors.red.shade100,
+                  iconColor: Colors.red.shade800,
                 ),
               ),
             ],
@@ -848,7 +911,11 @@ class _HomeScreenState extends State<HomeScreen>
     final pending = _reminders
         .where(
           (r) =>
-              !r.isCompleted && !r.isCanceled && r.scheduledTimeMillis >= now,
+              !r.isCompleted &&
+              !r.isCanceled &&
+              !r.isSkipped &&
+              !r.isMissed &&
+              r.scheduledTimeMillis >= now,
         )
         .toList();
 

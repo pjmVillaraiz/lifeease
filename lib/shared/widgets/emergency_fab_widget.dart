@@ -217,6 +217,28 @@ class _ContactsBottomSheetState extends State<_ContactsBottomSheet> {
     );
   }
 
+  Future<void> _executeMessage(String phone) async {
+    final launched = await _emergencyRouteProcessor.message(
+      phone,
+      message: 'LifeEase emergency: I need help. Please contact me.',
+    );
+    if (!mounted) return;
+
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          launched
+              ? 'Opening message for $phone...'
+              : 'Unable to open messages for $phone',
+          style: GoogleFonts.nunitoSans(fontSize: 15),
+        ),
+        backgroundColor: launched ? AppTheme.success : AppTheme.errorRed,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -406,31 +428,44 @@ class _ContactsBottomSheetState extends State<_ContactsBottomSheet> {
               ),
             ],
           ),
-          trailing: ElevatedButton(
-            onPressed: () {
-              HapticFeedback.mediumImpact();
-              if (widget.countdownEnabled) {
-                _startCountdown(contact);
-              } else {
-                _executeCall(contact.phone);
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.errorRed,
-              foregroundColor: Colors.white,
-              minimumSize: const Size(90, 42),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
+          trailing: Wrap(
+            spacing: 8,
+            children: [
+              IconButton.filledTonal(
+                tooltip: 'Message',
+                onPressed: () {
+                  HapticFeedback.mediumImpact();
+                  _executeMessage(contact.phone);
+                },
+                icon: const Icon(Icons.message_rounded),
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-            ),
-            child: Text(
-              'Call Now',
-              style: GoogleFonts.nunitoSans(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
+              ElevatedButton(
+                onPressed: () {
+                  HapticFeedback.mediumImpact();
+                  if (widget.countdownEnabled) {
+                    _startCountdown(contact);
+                  } else {
+                    _executeCall(contact.phone);
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.errorRed,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(90, 42),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                ),
+                child: Text(
+                  'Call Now',
+                  style: GoogleFonts.nunitoSans(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
-            ),
+            ],
           ),
         ),
       ),

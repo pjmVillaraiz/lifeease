@@ -13,10 +13,12 @@ import 'package:lifeease/shared/widgets/loading_skeleton_widget.dart';
 import 'package:lifeease/core/services/backend/reminder_repository.dart';
 import 'package:lifeease/core/services/backend/supabase_auth_service.dart';
 import 'package:lifeease/core/services/backend/user_profile_service.dart';
+import 'package:lifeease/core/services/emergency/emergency_route_processing_module.dart';
 import 'package:lifeease/core/services/notifications/reminder_notification_service.dart';
 import 'package:lifeease/core/services/tts/tts_language_service.dart';
 import 'package:lifeease/features/reminders/presentation/add_reminder_screen/add_reminder_screen.dart';
 import 'package:lifeease/features/sus_evaluation/application/sus_processing_module.dart';
+import 'package:lifeease/features/translation/application/language_translation_processing_module.dart';
 import 'package:lifeease/features/voice/application/speech_processing_module.dart';
 import 'package:lifeease/features/voice/application/voice_command_processing_module.dart';
 
@@ -224,6 +226,8 @@ class _HomeScreenState extends State<HomeScreen>
   late final UserProfileService _profileService;
   late final SpeechProcessingModule _speechModule;
   late final VoiceCommandProcessingModule _voiceProcessor;
+  late final LanguageTranslationProcessingModule _translationProcessor;
+  late final EmergencyRouteProcessingModule _emergencyRouteProcessor;
   late final SusProcessingModule _susProcessor;
   late final StreamSubscription<void> _reminderChanges;
 
@@ -255,6 +259,8 @@ class _HomeScreenState extends State<HomeScreen>
     _profileService = UserProfileService();
     _speechModule = SpeechProcessingModule();
     _voiceProcessor = VoiceCommandProcessingModule();
+    _translationProcessor = LanguageTranslationProcessingModule();
+    _emergencyRouteProcessor = EmergencyRouteProcessingModule();
     _susProcessor = SusProcessingModule();
     WidgetsBinding.instance.addObserver(this);
     _reminderChanges = ReminderRepository.changes.listen((_) {
@@ -356,12 +362,25 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _onSpeakCommand() async {
     HapticFeedback.heavyImpact();
     setState(() => _isListening = true);
-    final spokenText = await _speechModule.listenOnce();
-    if (!mounted) return;
+    try {
+      final spokenText = await _speechModule.listenOnce();
+      if (!mounted) return;
 
-    setState(() => _isListening = false);
-    if (spokenText != null && spokenText.isNotEmpty) {
-      await _handleCommandText(spokenText);
+      if (spokenText != null && spokenText.isNotEmpty) {
+        await _handleCommandText(spokenText);
+      } else {
+        _showSnack(
+          tr(
+            LanguageController.isTagalog.value,
+            'No speech was heard. Please try again.',
+            'Walang narinig na boses. Subukan muli.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isListening = false);
+      }
     }
   }
 
@@ -373,13 +392,51 @@ class _HomeScreenState extends State<HomeScreen>
       Navigator.pushNamed(
         context,
         AppRoutes.addReminderScreen,
-        arguments: {'prefillTitle': result.task},
+        arguments: {
+          'prefillTitle': result.task,
+          'prefillTime': _timeOfDayFromVoiceTime(result.time),
+        },
       );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Command recognized: \${result.task}')),
-      );
+      return;
     }
+
+    if (result.type == VoiceIntentType.callEmergency) {
+      final phone = _emergencyContacts.first.phone;
+      final launched = await _emergencyRouteProcessor.call(phone);
+      if (!mounted) return;
+      _showSnack(
+        launched
+            ? tr(
+                LanguageController.isTagalog.value,
+                'Opening emergency dialer...',
+                'Binubuksan ang emergency dialer...',
+              )
+            : tr(
+                LanguageController.isTagalog.value,
+                'Unable to open emergency dialer.',
+                'Hindi mabuksan ang emergency dialer.',
+              ),
+      );
+      return;
+    }
+
+    if (result.type == VoiceIntentType.translate) {
+      await _showTranslationDialog(result.task.isEmpty ? input : result.task);
+      return;
+    }
+
+    if (result.type == VoiceIntentType.summarize) {
+      _showSnack(result.summary);
+      return;
+    }
+
+    _showSnack(
+      tr(
+        LanguageController.isTagalog.value,
+        'Command not recognized. Try "add reminder to take medicine at 8 AM".',
+        'Hindi nakilala ang utos. Subukan: "magdagdag ng paalala uminom ng gamot 8 AM".',
+      ),
+    );
   }
 
   void _onNavTap(int index) {
@@ -397,11 +454,124 @@ class _HomeScreenState extends State<HomeScreen>
         setState(() => _currentNavIndex = 0);
         _loadReminders();
       });
+    } else if (index == 2) {
+      _onSpeakCommand();
+      setState(() => _currentNavIndex = 0);
+    } else if (index == 3) {
+      _showTranslationDialog('');
+      setState(() => _currentNavIndex = 0);
     } else if (index == 4) {
       Navigator.pushNamed(context, AppRoutes.settingsScreen).then((_) {
         setState(() => _currentNavIndex = 0);
       });
     }
+  }
+
+  TimeOfDay? _timeOfDayFromVoiceTime(String? value) {
+    if (value == null || value.trim().isEmpty) return null;
+    final match = RegExp(
+      r'^(\d{1,2}):(\d{2})\s*(AM|PM)$',
+      caseSensitive: false,
+    ).firstMatch(value.trim());
+    if (match == null) return null;
+
+    var hour = int.tryParse(match.group(1) ?? '') ?? 0;
+    final minute = int.tryParse(match.group(2) ?? '') ?? 0;
+    final suffix = (match.group(3) ?? '').toUpperCase();
+    if (suffix == 'PM' && hour < 12) hour += 12;
+    if (suffix == 'AM' && hour == 12) hour = 0;
+    return TimeOfDay(hour: hour, minute: minute);
+  }
+
+  Future<void> _showTranslationDialog(String initialText) async {
+    final controller = TextEditingController(text: initialText);
+    var translatedText = '';
+    var toTagalog = !LanguageController.isTagalog.value;
+    var isTranslating = false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text(
+            tr(LanguageController.isTagalog.value, 'Translate', 'Isalin'),
+          ),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: controller,
+                  minLines: 2,
+                  maxLines: 4,
+                  decoration: InputDecoration(
+                    labelText: tr(
+                      LanguageController.isTagalog.value,
+                      'Text',
+                      'Teksto',
+                    ),
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    toTagalog ? 'English to Tagalog' : 'Tagalog to English',
+                  ),
+                  value: toTagalog,
+                  onChanged: (value) {
+                    setDialogState(() {
+                      toTagalog = value;
+                      translatedText = '';
+                    });
+                  },
+                ),
+                if (translatedText.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: SelectableText(translatedText),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close'),
+            ),
+            ElevatedButton(
+              onPressed: isTranslating
+                  ? null
+                  : () async {
+                      setDialogState(() => isTranslating = true);
+                      final result = await _translationProcessor.translateAsync(
+                        text: controller.text,
+                        toTagalog: toTagalog,
+                      );
+                      setDialogState(() {
+                        translatedText = result.text;
+                        isTranslating = false;
+                      });
+                    },
+              child: Text(isTranslating ? 'Translating...' : 'Translate'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    controller.dispose();
+  }
+
+  void _showSnack(String message) {
+    if (message.trim().isEmpty || !mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override

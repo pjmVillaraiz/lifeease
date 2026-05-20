@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
@@ -52,6 +53,9 @@ class ReminderNotificationService {
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   final FlutterTts _tts = FlutterTts();
+  static const MethodChannel _nativeReminderChannel = MethodChannel(
+    'lifeease/reminder_native',
+  );
 
   bool _initialized = false;
   bool _callbacksRegistered = false;
@@ -68,15 +72,18 @@ class ReminderNotificationService {
   static const String _darwinTagalogCategoryId = 'lifeease_reminder_actions_tl';
   static const String _repeatConfigPrefix = 'lifeease.reminder.repeat.';
   static const String _scheduledIdsKey = 'lifeease.reminder.scheduled_ids';
+  static const String _lastTimeZoneKey = 'lifeease.reminder.last_timezone';
   static const Duration _lateReminderGrace = Duration(minutes: 5);
   static const Duration _ignoredRetryDelay = Duration(minutes: 1);
   static const int _maxIgnoredRetries = 3;
 
   Future<void> initialize({bool requestPermissions = true}) async {
-    if (_initialized) return;
+    if (_initialized) {
+      await _initializeTimeZone();
+      return;
+    }
 
-    tz.initializeTimeZones();
-    tz.setLocalLocation(tz.getLocation('Asia/Manila'));
+    await _initializeTimeZone();
     await _ensureSettingsLoaded();
     await _ensureAlarmManagerInitialized();
 
@@ -148,6 +155,11 @@ class ReminderNotificationService {
         'skipping.',
       );
       await _cancelAlarmById(notificationId, removeTracking: false);
+      await _scheduleNativeSpeechAlarm(
+        notificationTime: DateTime.now().add(const Duration(seconds: 1)),
+        alarmId: notificationId,
+        reminder: params,
+      );
       await handleAlarmFired(notificationId, params);
       return;
     }
@@ -217,6 +229,11 @@ class ReminderNotificationService {
       usedAlarmManager = false;
     }
 
+    await _scheduleNativeSpeechAlarm(
+      notificationTime: notificationTime,
+      alarmId: notificationId,
+      reminder: params,
+    );
     await _addScheduledId(notificationId);
     if (isRepeating && usedAlarmManager) {
       await _saveRepeatConfig(notificationId, params);
@@ -246,6 +263,7 @@ class ReminderNotificationService {
     if (reminderId == null || reminderId.isEmpty) return;
     final notificationId = _notificationIdFor(reminderId);
     await AndroidAlarmManager.cancel(notificationId);
+    await _cancelNativeSpeechAlarm(notificationId);
     await _plugin.cancel(id: notificationId);
     await _removeScheduledId(notificationId);
     await _removeRepeatConfig(notificationId);
@@ -485,6 +503,8 @@ class ReminderNotificationService {
 
     await _scheduleIgnoredRetryOrMiss(alarmId: alarmId, reminder: reminder);
 
+    if (defaultTargetPlatform == TargetPlatform.android) return;
+
     try {
       await _speakReminder(reminder);
     } catch (error, stackTrace) {
@@ -618,8 +638,9 @@ class ReminderNotificationService {
         ..['markMissedOnFire'] = true;
     }
 
+    final retryTime = DateTime.now().add(_ignoredRetryDelay);
     final scheduled = await _scheduleAlarm(
-      notificationTime: DateTime.now().add(_ignoredRetryDelay),
+      notificationTime: retryTime,
       alarmId: alarmId,
       params: nextReminder,
     );
@@ -627,6 +648,11 @@ class ReminderNotificationService {
       debugPrint('Ignored reminder retry scheduling failed for $id.');
       return;
     }
+    await _scheduleNativeSpeechAlarm(
+      notificationTime: retryTime,
+      alarmId: alarmId,
+      reminder: nextReminder,
+    );
     await _addScheduledId(alarmId);
   }
 
@@ -714,6 +740,7 @@ class ReminderNotificationService {
     bool removeTracking = true,
   }) async {
     await AndroidAlarmManager.cancel(alarmId);
+    await _cancelNativeSpeechAlarm(alarmId);
     await _plugin.cancel(id: alarmId);
     if (removeTracking) {
       await _removeScheduledId(alarmId);
@@ -761,6 +788,7 @@ class ReminderNotificationService {
       final alarmId = int.tryParse(id);
       if (alarmId == null) continue;
       await AndroidAlarmManager.cancel(alarmId);
+      await _cancelNativeSpeechAlarm(alarmId);
       await _plugin.cancel(id: alarmId);
     }
     await prefs.remove(_scheduledIdsKey);
@@ -879,6 +907,83 @@ class ReminderNotificationService {
       debugPrint('Reminder fallback scheduling threw: $error');
       debugPrintStack(stackTrace: stackTrace);
       return false;
+    }
+  }
+
+  Future<void> _initializeTimeZone() async {
+    tz.initializeTimeZones();
+    final timeZoneName = await _deviceTimeZoneName();
+    var locationName = timeZoneName;
+
+    try {
+      tz.setLocalLocation(tz.getLocation(locationName));
+    } catch (error) {
+      debugPrint(
+        'Device timezone "$locationName" is unavailable; using Asia/Manila. '
+        '$error',
+      );
+      locationName = 'Asia/Manila';
+      tz.setLocalLocation(tz.getLocation(locationName));
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final previousTimeZone = prefs.getString(_lastTimeZoneKey);
+    if (previousTimeZone != locationName) {
+      await prefs.setString(_lastTimeZoneKey, locationName);
+      if (previousTimeZone != null) {
+        debugPrint(
+          'Reminder timezone changed from $previousTimeZone to $locationName.',
+        );
+      }
+    }
+  }
+
+  Future<String> _deviceTimeZoneName() async {
+    if (kIsWeb) return DateTime.now().timeZoneName;
+
+    try {
+      final timeZoneName = await _nativeReminderChannel.invokeMethod<String>(
+        'getTimeZoneName',
+      );
+      if (timeZoneName != null && timeZoneName.trim().isNotEmpty) {
+        return timeZoneName.trim();
+      }
+    } catch (error) {
+      debugPrint('Device timezone lookup failed: $error');
+    }
+
+    return 'Asia/Manila';
+  }
+
+  Future<void> _scheduleNativeSpeechAlarm({
+    required DateTime notificationTime,
+    required int alarmId,
+    required Map<String, dynamic> reminder,
+  }) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    if (!notificationTime.isAfter(DateTime.now())) return;
+
+    try {
+      await _nativeReminderChannel.invokeMethod<void>('scheduleSpeechAlarm', {
+        'alarmId': alarmId,
+        'triggerAtMillis': notificationTime.millisecondsSinceEpoch,
+        'text': _spokenTextFor(reminder),
+        'languageCode': TtsLanguageService.currentLanguage.code,
+      });
+    } catch (error) {
+      debugPrint('Native reminder speech alarm scheduling failed: $error');
+    }
+  }
+
+  Future<void> _cancelNativeSpeechAlarm(int alarmId) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+
+    try {
+      await _nativeReminderChannel.invokeMethod<void>('cancelSpeechAlarm', {
+        'alarmId': alarmId,
+      });
+    } catch (error) {
+      debugPrint('Native reminder speech alarm cancel failed: $error');
     }
   }
 

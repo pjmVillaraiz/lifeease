@@ -20,7 +20,10 @@ class SpeechProcessingModule {
 
   Future<bool> initialize() async {
     if (_isReady) return true;
-    final available = await _speech.initialize();
+    final available = await _speech.initialize(
+      onError: (error) => debugPrint('Speech recognition error: $error'),
+      onStatus: (status) => debugPrint('Speech recognition status: $status'),
+    );
     await _tts.setSpeechRate(0.48);
     await _tts.setPitch(1.0);
     await TtsLanguageService.applyCurrentLanguage(_tts);
@@ -34,6 +37,9 @@ class SpeechProcessingModule {
   }) async {
     final ok = await initialize();
     if (!ok) return null;
+    if (_speech.isListening) {
+      await _speech.stop();
+    }
 
     String captured = "";
     await _speech.listen(

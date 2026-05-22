@@ -230,6 +230,9 @@ class _HomeScreenState extends State<HomeScreen>
   late final EmergencyRouteProcessingModule _emergencyRouteProcessor;
   late final SusProcessingModule _susProcessor;
   late final StreamSubscription<void> _reminderChanges;
+  Timer? _statusRefreshTimer;
+  bool _isReconcilingDueReminders = false;
+  bool _hasScheduledLoadedReminders = false;
 
   late AnimationController _listEntranceController;
 
@@ -266,6 +269,11 @@ class _HomeScreenState extends State<HomeScreen>
     _reminderChanges = ReminderRepository.changes.listen((_) {
       _loadReminders(showLoading: false);
     });
+    _statusRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() {});
+      _reconcileDueReminders();
+    });
     _loadReminders();
     _loadProfileName();
   }
@@ -274,6 +282,7 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _reminderChanges.cancel();
+    _statusRefreshTimer?.cancel();
     _listEntranceController.dispose();
     super.dispose();
   }
@@ -304,7 +313,18 @@ class _HomeScreenState extends State<HomeScreen>
       setState(() => _isLoading = true);
     }
 
-    final rows = await _reminderRepository.loadReminders();
+    var rows = await _reminderRepository.loadReminders();
+    if (!_hasScheduledLoadedReminders) {
+      _hasScheduledLoadedReminders = true;
+      await ReminderNotificationService.instance.schedulePendingReminders(rows);
+      rows = await _reminderRepository.loadReminders();
+    } else {
+      final changed = await ReminderNotificationService.instance
+          .reconcileDueReminders(rows);
+      if (changed) {
+        rows = await _reminderRepository.loadReminders();
+      }
+    }
     if (!mounted) return;
 
     final loaded = rows.map(ReminderModel.fromMap).toList();
@@ -318,6 +338,21 @@ class _HomeScreenState extends State<HomeScreen>
     });
 
     _listEntranceController.forward(from: 0.0);
+  }
+
+  Future<void> _reconcileDueReminders() async {
+    if (_isReconcilingDueReminders) return;
+    _isReconcilingDueReminders = true;
+    try {
+      final rows = _reminders.map((reminder) => reminder.toMap()).toList();
+      final changed = await ReminderNotificationService.instance
+          .reconcileDueReminders(rows);
+      if (changed && mounted) {
+        await _loadReminders(showLoading: false);
+      }
+    } finally {
+      _isReconcilingDueReminders = false;
+    }
   }
 
   Future<void> _onRefresh() async {

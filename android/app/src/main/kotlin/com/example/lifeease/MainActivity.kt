@@ -13,6 +13,7 @@ import android.speech.tts.UtteranceProgressListener
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.time.ZoneId
 import java.util.Locale
 import java.util.TimeZone
 
@@ -30,7 +31,25 @@ class MainActivity : FlutterFragmentActivity() {
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
-                "getTimeZoneName" -> result.success(TimeZone.getDefault().id)
+                "getTimeZoneName" -> result.success(deviceTimeZoneId())
+                "speakReminderNow" -> {
+                    val alarmId = call.argument<Int>(EXTRA_ALARM_ID)
+                    val text = call.argument<String>(EXTRA_TEXT)
+                    val languageCode = call.argument<String>(EXTRA_LANGUAGE_CODE) ?: "en"
+
+                    if (alarmId == null || text.isNullOrBlank()) {
+                        result.error("invalid_args", "Missing reminder speech arguments.", null)
+                        return@setMethodCallHandler
+                    }
+
+                    ReminderSpeechPlayer.speak(
+                        context = applicationContext,
+                        alarmId = alarmId,
+                        text = text,
+                        languageCode = languageCode,
+                    )
+                    result.success(null)
+                }
                 "scheduleSpeechAlarm" -> {
                     val alarmId = call.argument<Int>(EXTRA_ALARM_ID)
                     val triggerAtMillis = call.argument<Number>(EXTRA_TRIGGER_AT_MILLIS)?.toLong()
@@ -63,6 +82,19 @@ class MainActivity : FlutterFragmentActivity() {
                 }
                 else -> result.notImplemented()
             }
+        }
+    }
+
+    private fun deviceTimeZoneId(): String {
+        val zoneId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            ZoneId.systemDefault().id
+        } else {
+            TimeZone.getDefault().id
+        }
+
+        return when (zoneId.uppercase(Locale.US)) {
+            "GMT", "UTC", "UT" -> "UTC"
+            else -> zoneId
         }
     }
 }
@@ -236,7 +268,12 @@ private object ReminderSpeechPlayer {
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build(),
             )
-            engine.language = localeFor(languageCode)
+            val languageStatus = engine.setLanguage(localeFor(languageCode))
+            if (languageStatus == TextToSpeech.LANG_MISSING_DATA ||
+                languageStatus == TextToSpeech.LANG_NOT_SUPPORTED
+            ) {
+                engine.setLanguage(Locale.US)
+            }
             engine.setSpeechRate(0.9f)
             engine.setPitch(1.0f)
             engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -266,7 +303,7 @@ private object ReminderSpeechPlayer {
 
     private fun localeFor(languageCode: String): Locale {
         return if (languageCode.equals("tl", ignoreCase = true)) {
-            Locale("fil", "PH")
+            Locale.forLanguageTag("fil-PH")
         } else {
             Locale.US
         }

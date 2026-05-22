@@ -1,5 +1,5 @@
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:lifeease/core/constants/env_config.dart';
 
@@ -8,9 +8,9 @@ class SupabaseConfig {
 
   static bool get isConfigured {
     final url = EnvConfig.maybeGet('SUPABASE_URL');
-    final anonKey = EnvConfig.maybeGet('SUPABASE_ANON_KEY');
 
-    return _isValidSupabaseUrl(url) && !EnvConfig.isPlaceholder(anonKey);
+    return _isValidSupabaseUrl(url) &&
+        EnvConfig.hasRealValue('SUPABASE_ANON_KEY');
   }
 
   static bool get isInitialized => _initialized;
@@ -32,12 +32,9 @@ class SupabaseConfig {
     }
 
     try {
-      final url = EnvConfig.get('SUPABASE_URL');
-      final anonKey = EnvConfig.get('SUPABASE_ANON_KEY');
-
       await Supabase.initialize(
-        url: url,
-        anonKey: anonKey,
+        url: EnvConfig.supabaseUrl,
+        anonKey: EnvConfig.supabaseAnonKey,
         authOptions: const FlutterAuthClientOptions(
           authFlowType: AuthFlowType.pkce,
         ),
@@ -45,19 +42,17 @@ class SupabaseConfig {
 
       _initialized = true;
 
-      // Perform a robust connection test with a short timeout
-      // If it fails or times out, we just continue in guest mode
+      // Perform a robust connection test with a short timeout.
+      // If it fails or times out, we continue in guest mode.
       await _testConnection().timeout(
         const Duration(seconds: 5),
         onTimeout: () => throw Exception('Connection test timed out'),
       );
-    } catch (e) {
+    } catch (error) {
       if (kDebugMode) {
-        print('🚨 SUPABASE INITIALIZATION ERROR: $e');
+        print('SUPABASE INITIALIZATION ERROR: $error');
         print('Starting LifeEase in guest/offline mode.');
       }
-      // Note: _initialized remains true if Supabase.initialize succeeded
-      // but the connection test failed.
     }
   }
 
@@ -79,38 +74,34 @@ class SupabaseConfig {
 
     try {
       if (kDebugMode) {
-        print('⚡ Testing Supabase connection...');
+        print('Testing Supabase connection...');
       }
 
-      // A simple non-destructive query to verify DB connection and anon key
-      // If the 'users' or 'reminders' table exists, this will return quickly.
-      // We limit to 1 to just check if the endpoint is reachable.
+      // A simple non-destructive query to verify DB connection and anon key.
       await client.from('reminders').select('id').limit(1);
 
       if (kDebugMode) {
-        print('✅ Supabase connected successfully!');
+        print('Supabase connected successfully.');
       }
-    } on PostgrestException catch (e) {
-      // If we get a PostgrestException, it means we connected to the database successfully,
-      // but maybe the table doesn't exist or RLS blocked it. That's fine, connection is verified.
-      if (e.code == 'PGRST116' || e.code == '42P01') {
+    } on PostgrestException catch (error) {
+      // Postgrest errors still prove the endpoint and anon key were reached.
+      if (error.code == 'PGRST116' || error.code == '42P01') {
         if (kDebugMode) {
           print(
-            '⚠️ Supabase connected, but got DB error (Table missing or RLS): \${e.message}',
+            'Supabase connected, but got DB error (table missing or RLS): ${error.message}',
           );
         }
       } else {
         if (kDebugMode) {
-          print('⚠️ Supabase Postgrest Error: \${e.message}');
+          print('Supabase Postgrest error: ${error.message}');
         }
       }
-    } catch (e) {
+    } catch (error) {
       if (kDebugMode) {
-        print('🚨 SUPABASE CONNECTION TEST FAILED: \$e');
+        print('SUPABASE CONNECTION TEST FAILED: $error');
       }
-      // Rethrow to alert the developer that the URL might be unreachable
       throw Exception(
-        'Supabase endpoint unreachable. Are you connected to the internet? Error: \$e',
+        'Supabase endpoint unreachable. Are you connected to the internet? Error: $error',
       );
     }
   }

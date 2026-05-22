@@ -62,7 +62,7 @@ class ReminderNotificationService {
   Future<void>? _alarmManagerInitialization;
   Future<void> _speechQueue = Future<void>.value();
 
-  static const String _channelId = 'lifeease_reminders_v2';
+  static const String _channelId = 'lifeease_reminders_silent_v1';
   static const String _channelName = 'Reminder Alerts';
   static const String _channelDescription =
       'Alerts for scheduled LifeEase reminders.';
@@ -73,6 +73,8 @@ class ReminderNotificationService {
   static const String _repeatConfigPrefix = 'lifeease.reminder.repeat.';
   static const String _scheduledIdsKey = 'lifeease.reminder.scheduled_ids';
   static const String _lastTimeZoneKey = 'lifeease.reminder.last_timezone';
+  static const String _firedOccurrencePrefix =
+      'lifeease.reminder.fired_occurrence.';
   static const Duration _lateReminderGrace = Duration(minutes: 5);
   static const Duration _ignoredRetryDelay = Duration(minutes: 1);
   static const int _maxIgnoredRetries = 3;
@@ -149,6 +151,17 @@ class ReminderNotificationService {
     final notificationId = _notificationIdFor(id);
     final params = _alarmParamsFor(reminder);
     final now = DateTime.now();
+    if (kDebugMode) {
+      debugPrint(
+        'Scheduling reminder "$title" for ${scheduledAt.toIso8601String()} '
+        '(now ${now.toIso8601String()}).',
+      );
+    }
+    if (!scheduledAt.isAfter(now) &&
+        await _hasOccurrenceFired(reminder, scheduledAt)) {
+      return;
+    }
+
     if (_shouldFireImmediately(scheduledAt, now)) {
       debugPrint(
         'Reminder "$title" is slightly late; firing immediately instead of '
@@ -208,6 +221,13 @@ class ReminderNotificationService {
       params: params,
     );
     var usedAlarmManager = scheduled;
+    if (scheduled) {
+      await _scheduleLocalNotification(
+        notificationTime: notificationTime,
+        alarmId: notificationId,
+        reminder: params,
+      );
+    }
 
     if (!scheduled) {
       debugPrint(
@@ -246,6 +266,7 @@ class ReminderNotificationService {
     List<Map<String, dynamic>> reminders,
   ) async {
     await initialize();
+    await reconcileDueReminders(reminders);
 
     if (!SettingsController.instance.notificationsEnabled) {
       await _cancelTrackedAlarms();
@@ -311,7 +332,7 @@ class ReminderNotificationService {
       _channelName,
       description: _channelDescription,
       importance: Importance.max,
-      playSound: true,
+      playSound: false,
       enableVibration: true,
       showBadge: true,
     );
@@ -327,7 +348,7 @@ class ReminderNotificationService {
       channelDescription: _channelDescription,
       importance: Importance.max,
       priority: Priority.max,
-      playSound: settings.soundEnabled,
+      playSound: false,
       enableVibration: settings.vibrationEnabled,
       category: AndroidNotificationCategory.alarm,
       fullScreenIntent: true,
@@ -352,7 +373,7 @@ class ReminderNotificationService {
     final ios = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
-      presentSound: settings.soundEnabled,
+      presentSound: false,
       categoryIdentifier: _currentDarwinCategoryId(),
     );
 
@@ -488,8 +509,10 @@ class ReminderNotificationService {
       reminder['reminder_time'] ?? reminder['scheduledTimeMillis'],
     );
     if (scheduledAt == null) return;
+    await _markOccurrenceFired(reminder, scheduledAt);
 
     if (reminder['markMissedOnFire'] == true) {
+      await _markOccurrenceFired(reminder, scheduledAt);
       await _markReminderMissedIfStillPending(alarmId, reminder);
       return;
     }
@@ -501,6 +524,11 @@ class ReminderNotificationService {
       debugPrintStack(stackTrace: stackTrace);
     }
 
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      await _speakNativeReminderNow(alarmId: alarmId, reminder: reminder);
+    }
+
+    await _markOccurrenceFired(reminder, scheduledAt);
     await _scheduleIgnoredRetryOrMiss(alarmId: alarmId, reminder: reminder);
 
     if (defaultTargetPlatform == TargetPlatform.android) return;
@@ -554,6 +582,12 @@ class ReminderNotificationService {
     Map<String, dynamic> reminder,
     DateTime scheduledAt,
   ) async {
+    if (kDebugMode) {
+      debugPrint(
+        'Showing reminder notification $alarmId for '
+        '${reminder['title']} at ${DateTime.now().toIso8601String()}.',
+      );
+    }
     await _plugin.show(
       id: alarmId,
       title: TtsLanguageService.notificationTitle(),
@@ -574,6 +608,26 @@ class ReminderNotificationService {
       await _tts.stop();
       await _tts.speak(text);
     });
+  }
+
+  Future<void> _speakNativeReminderNow({
+    required int alarmId,
+    required Map<String, dynamic> reminder,
+  }) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+
+    final text = _spokenTextFor(reminder);
+    if (text.trim().isEmpty) return;
+
+    try {
+      await _nativeReminderChannel.invokeMethod<void>('speakReminderNow', {
+        'alarmId': alarmId,
+        'text': text,
+        'languageCode': TtsLanguageService.currentLanguage.code,
+      });
+    } catch (error) {
+      debugPrint('Native reminder speech trigger failed: $error');
+    }
   }
 
   Future<void> _applyNotificationAction({
@@ -691,6 +745,85 @@ class ReminderNotificationService {
       debugPrintStack(stackTrace: stackTrace);
     });
     return _speechQueue;
+  }
+
+  Future<bool> reconcileDueReminders(
+    List<Map<String, dynamic>> reminders,
+  ) async {
+    if (!SettingsController.instance.notificationsEnabled) return false;
+
+    final now = DateTime.now();
+    final repository = ReminderRepository();
+    var changed = false;
+    for (final reminder in reminders) {
+      if (_isCompleted(reminder) ||
+          _isCanceled(reminder) ||
+          _isSkipped(reminder) ||
+          _isMissed(reminder)) {
+        continue;
+      }
+
+      final scheduledAt = _dateTimeFromValue(
+        reminder['reminder_time'] ?? reminder['scheduledTimeMillis'],
+      );
+      if (scheduledAt == null || scheduledAt.isAfter(now)) continue;
+
+      final isFired = await _hasOccurrenceFired(reminder, scheduledAt);
+      if (isFired && now.difference(scheduledAt) <= _lateReminderGrace) {
+        continue;
+      }
+
+      if (!isFired && now.difference(scheduledAt) <= _lateReminderGrace) {
+        await handleAlarmFired(_notificationIdFor(reminder['id'].toString()), {
+          ..._alarmParamsFor(reminder),
+          'reconciledLateFire': true,
+        });
+        changed = true;
+        continue;
+      }
+
+      await _markOccurrenceFired(reminder, scheduledAt);
+      await repository.markReminderMissed(reminder);
+      changed = true;
+      if (_isRepeating(reminder)) {
+        final id = reminder['id']?.toString();
+        if (id != null) {
+          final updated = await repository.loadReminderById(id);
+          if (updated != null) {
+            await scheduleReminder(updated);
+          }
+        }
+      }
+    }
+    return changed;
+  }
+
+  Future<bool> _hasOccurrenceFired(
+    Map<String, dynamic> reminder,
+    DateTime scheduledAt,
+  ) async {
+    final key = _firedOccurrenceKey(reminder, scheduledAt);
+    if (key == null) return false;
+
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(key) ?? false;
+  }
+
+  Future<void> _markOccurrenceFired(
+    Map<String, dynamic> reminder,
+    DateTime scheduledAt,
+  ) async {
+    final key = _firedOccurrenceKey(reminder, scheduledAt);
+    if (key == null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(key, true);
+  }
+
+  String? _firedOccurrenceKey(Map<String, dynamic> reminder, DateTime at) {
+    final id = reminder['id']?.toString();
+    if (id == null || id.isEmpty) return null;
+    return '$_firedOccurrencePrefix$id.${at.millisecondsSinceEpoch}';
   }
 
   Future<void> _saveRepeatConfig(
@@ -893,15 +1026,31 @@ class ReminderNotificationService {
       final scheduledAt = _dateTimeFromValue(
         reminder['reminder_time'] ?? reminder['scheduledTimeMillis'],
       );
-      await _plugin.zonedSchedule(
-        id: alarmId,
-        title: TtsLanguageService.notificationTitle(),
-        body: _bodyFor(reminder, scheduledAt ?? notificationTime),
-        scheduledDate: tz.TZDateTime.from(notificationTime, tz.local),
-        notificationDetails: _details(),
-        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-        payload: _payloadFor(alarmId, reminder),
-      );
+      try {
+        await _plugin.zonedSchedule(
+          id: alarmId,
+          title: TtsLanguageService.notificationTitle(),
+          body: _bodyFor(reminder, scheduledAt ?? notificationTime),
+          scheduledDate: tz.TZDateTime.from(notificationTime, tz.local),
+          notificationDetails: _details(),
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          payload: _payloadFor(alarmId, reminder),
+        );
+      } on PlatformException catch (error) {
+        debugPrint(
+          'Exact local notification scheduling failed; using inexact fallback: '
+          '$error',
+        );
+        await _plugin.zonedSchedule(
+          id: alarmId,
+          title: TtsLanguageService.notificationTitle(),
+          body: _bodyFor(reminder, scheduledAt ?? notificationTime),
+          scheduledDate: tz.TZDateTime.from(notificationTime, tz.local),
+          notificationDetails: _details(),
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          payload: _payloadFor(alarmId, reminder),
+        );
+      }
       return true;
     } catch (error, stackTrace) {
       debugPrint('Reminder fallback scheduling threw: $error');
@@ -913,34 +1062,29 @@ class ReminderNotificationService {
   Future<void> _initializeTimeZone() async {
     tz.initializeTimeZones();
     final timeZoneName = await _deviceTimeZoneName();
-    var locationName = timeZoneName;
+    final locationName = _normalizeTimeZoneName(timeZoneName);
 
     try {
       tz.setLocalLocation(tz.getLocation(locationName));
     } catch (error) {
-      debugPrint(
-        'Device timezone "$locationName" is unavailable; using Asia/Manila. '
-        '$error',
-      );
-      locationName = 'Asia/Manila';
-      tz.setLocalLocation(tz.getLocation(locationName));
+      debugPrint('Device timezone "$locationName" is unavailable: $error');
+      tz.setLocalLocation(tz.UTC);
     }
 
     final prefs = await SharedPreferences.getInstance();
     final previousTimeZone = prefs.getString(_lastTimeZoneKey);
-    if (previousTimeZone != locationName) {
-      await prefs.setString(_lastTimeZoneKey, locationName);
+    final activeTimeZone = tz.local.name;
+    if (previousTimeZone != activeTimeZone) {
+      await prefs.setString(_lastTimeZoneKey, activeTimeZone);
       if (previousTimeZone != null) {
         debugPrint(
-          'Reminder timezone changed from $previousTimeZone to $locationName.',
+          'Reminder timezone changed from $previousTimeZone to $activeTimeZone.',
         );
       }
     }
   }
 
   Future<String> _deviceTimeZoneName() async {
-    if (kIsWeb) return DateTime.now().timeZoneName;
-
     try {
       final timeZoneName = await _nativeReminderChannel.invokeMethod<String>(
         'getTimeZoneName',
@@ -952,7 +1096,20 @@ class ReminderNotificationService {
       debugPrint('Device timezone lookup failed: $error');
     }
 
-    return 'Asia/Manila';
+    return DateTime.now().timeZoneName;
+  }
+
+  String _normalizeTimeZoneName(String timeZoneName) {
+    final normalized = timeZoneName.trim();
+    switch (normalized.toUpperCase()) {
+      case 'GMT':
+      case 'UTC':
+      case 'UT':
+      case 'Z':
+        return 'UTC';
+      default:
+        return normalized;
+    }
   }
 
   Future<void> _scheduleNativeSpeechAlarm({

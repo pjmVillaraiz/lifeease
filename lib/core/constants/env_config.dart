@@ -65,6 +65,11 @@ class EnvConfig {
 
   static String? get openAiApiKey => maybeGet('OPENAI_API_KEY');
   static String? get geminiApiKey => maybeGet('GEMINI_API_KEY');
+  static String? get groqApiKey => maybeGet('GROQ_API_KEY');
+  static String? get inworldApiKey => maybeGet('INWORLD_API_KEY');
+  static String? get cloudTranslationApiKey =>
+      maybeGet('CLOUDTRANSLATION_API_KEY') ??
+      maybeGet('GOOGLE_TRANSLATE_API_KEY');
   static String? get anthropicApiKey => maybeGet('ANTHROPIC_API_KEY');
   static String? get perplexityApiKey => maybeGet('PERPLEXITY_API_KEY');
   static String? get googleWebClientId => maybeGet('GOOGLE_WEB_CLIENT_ID');

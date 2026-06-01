@@ -295,6 +295,15 @@ class ReminderNotificationService {
     await _cancelTrackedAlarms();
   }
 
+  Future<void> triggerReminderNow(Map<String, dynamic> reminder) async {
+    await initialize();
+    final id = reminder['id']?.toString();
+    if (id == null || id.isEmpty) return;
+
+    final alarmId = _notificationIdFor(id);
+    await handleAlarmFired(alarmId, _alarmParamsFor(reminder));
+  }
+
   Future<void> _requestPermissions() async {
     if (kIsWeb) return;
 

@@ -21,22 +21,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final SupabaseAuthService _authService = SupabaseAuthService();
   final UserProfileService _profileService = UserProfileService();
   bool _isEditing = false;
-  final List<Map<String, String>> _emergencyContacts = [
-    {
-      'name': 'Maria Santos',
-      'relationship': 'Daughter',
-      'phone': '+63 917 123 4567',
-      'avatarUrl':
-          'https://images.pexels.com/photos/1181686/pexels-photo-1181686.jpeg',
-    },
-    {
-      'name': 'Dr. Reyes',
-      'relationship': 'Doctor',
-      'phone': '+63 928 123 4567',
-      'avatarUrl':
-          'https://images.pexels.com/photos/5452201/pexels-photo-5452201.jpeg',
-    },
-  ];
+  List<UserEmergencyContact> _emergencyContacts = const [];
 
   String tr(bool isTagalog, String en, String tl) => isTagalog ? tl : en;
 
@@ -64,6 +49,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _loadProfile() async {
     final profile = await _profileService.loadProfile();
+    final contacts = await _profileService.loadEmergencyContacts();
 
     if (!mounted) return;
     setState(() {
@@ -72,6 +58,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _phoneController.text = profile.phone ?? '';
       _birthdateController.text = profile.birthdate ?? '';
       _conditionsController.text = profile.medicalConditions ?? '';
+      _emergencyContacts = contacts;
     });
   }
 
@@ -225,14 +212,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   if (i > 0) _buildDivider(theme),
                   _buildContactTile(
                     theme,
-                    name: _emergencyContacts[i]['name']!,
-                    relationship: _emergencyContacts[i]['relationship']!,
-                    phone: _emergencyContacts[i]['phone']!,
-                    avatarUrl: _emergencyContacts[i]['avatarUrl']!,
+                    name: _emergencyContacts[i].name,
+                    relationship: _emergencyContacts[i].relationship,
+                    phone: _emergencyContacts[i].phone,
+                    avatarUrl: _emergencyContacts[i].avatarUrl,
+                    onTap: _isEditing ? () => _openEditContactPage(i) : null,
                   ),
                 ],
+                if (_emergencyContacts.isEmpty)
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 4.w,
+                      vertical: 1.5.h,
+                    ),
+                    child: Text(
+                      tr(
+                        isTagalog,
+                        'No emergency contacts yet.',
+                        'Wala pang emergency contact.',
+                      ),
+                      style: GoogleFonts.nunitoSans(
+                        fontSize: 14,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
                 if (_isEditing) ...[
-                  _buildDivider(theme),
+                  if (_emergencyContacts.isNotEmpty) _buildDivider(theme),
                   InkWell(
                     onTap: _openAddContactPage,
                     borderRadius: const BorderRadius.only(
@@ -502,59 +508,71 @@ class _ProfileScreenState extends State<ProfileScreen> {
     required String relationship,
     required String phone,
     required String avatarUrl,
+    VoidCallback? onTap,
   }) {
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 1.2.h),
-      child: Row(
-        children: [
-          ClipOval(
-            child: CustomImageWidget(
-              imageUrl: avatarUrl,
-              width: 44,
-              height: 44,
-              fit: BoxFit.cover,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name,
-                  style: GoogleFonts.nunitoSans(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: theme.colorScheme.onSurface,
-                  ),
-                ),
-                Text(
-                  '$relationship · $phone',
-                  style: GoogleFonts.nunitoSans(
-                    fontSize: 13,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: AppTheme.successContainer,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              relationship,
-              style: GoogleFonts.nunitoSans(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: AppTheme.success,
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 1.2.h),
+        child: Row(
+          children: [
+            ClipOval(
+              child: CustomImageWidget(
+                imageUrl: avatarUrl,
+                width: 44,
+                height: 44,
+                fit: BoxFit.cover,
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    style: GoogleFonts.nunitoSans(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                  Text(
+                    '$relationship - $phone',
+                    style: GoogleFonts.nunitoSans(
+                      fontSize: 13,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppTheme.successContainer,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                relationship,
+                style: GoogleFonts.nunitoSans(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.success,
+                ),
+              ),
+            ),
+            if (onTap != null) ...[
+              const SizedBox(width: 6),
+              Icon(
+                Icons.chevron_right,
+                size: 20,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -724,27 +742,75 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Future<void> _saveEmergencyContacts(
+    List<UserEmergencyContact> contacts,
+  ) async {
+    await _profileService.saveEmergencyContacts(contacts);
+    if (!mounted) return;
+    setState(() => _emergencyContacts = contacts);
+  }
+
+  Future<void> _openEditContactPage(int index) async {
+    final result = await Navigator.push<_EmergencyContactEditResult>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AddEmergencyContactScreen(
+          initialContact: _emergencyContacts[index],
+        ),
+      ),
+    );
+
+    if (result == null) return;
+
+    final updatedContacts = [..._emergencyContacts];
+    if (result.delete) {
+      updatedContacts.removeAt(index);
+      await _saveEmergencyContacts(updatedContacts);
+      _showSnackBar('Emergency contact deleted.');
+      return;
+    }
+
+    final contact = result.contact;
+    if (contact == null) return;
+
+    updatedContacts[index] = contact;
+    await _saveEmergencyContacts(updatedContacts);
+    _showSnackBar('Emergency contact saved.');
+  }
+
   Future<void> _openAddContactPage() async {
-    final contact = await Navigator.push<Map<String, String>>(
+    final result = await Navigator.push<_EmergencyContactEditResult>(
       context,
       MaterialPageRoute(builder: (_) => const AddEmergencyContactScreen()),
     );
 
+    final contact = result?.contact;
     if (contact == null) {
       return;
     }
 
-    setState(() => _emergencyContacts.add(contact));
+    await _saveEmergencyContacts([..._emergencyContacts, contact]);
     _showSnackBar('Emergency contact added.');
   }
 }
 
 class AddEmergencyContactScreen extends StatefulWidget {
-  const AddEmergencyContactScreen({super.key});
+  final UserEmergencyContact? initialContact;
+
+  const AddEmergencyContactScreen({super.key, this.initialContact});
 
   @override
   State<AddEmergencyContactScreen> createState() =>
       _AddEmergencyContactScreenState();
+}
+
+class _EmergencyContactEditResult {
+  final UserEmergencyContact? contact;
+  final bool delete;
+
+  const _EmergencyContactEditResult.save(this.contact) : delete = false;
+
+  const _EmergencyContactEditResult.delete() : contact = null, delete = true;
 }
 
 class _AddEmergencyContactScreenState extends State<AddEmergencyContactScreen> {
@@ -768,8 +834,22 @@ class _AddEmergencyContactScreenState extends State<AddEmergencyContactScreen> {
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
   String _relationship = _relationships.first;
+  bool get _isEditing => widget.initialContact != null;
 
   String tr(bool isTagalog, String en, String tl) => isTagalog ? tl : en;
+
+  @override
+  void initState() {
+    super.initState();
+    final contact = widget.initialContact;
+    if (contact == null) return;
+
+    _nameController.text = contact.name;
+    _phoneController.text = contact.phone;
+    _relationship = _relationships.contains(contact.relationship)
+        ? contact.relationship
+        : 'Other';
+  }
 
   @override
   void dispose() {
@@ -800,8 +880,10 @@ class _AddEmergencyContactScreenState extends State<AddEmergencyContactScreen> {
             title: Text(
               tr(
                 isTagalog,
-                'Add Emergency Contact',
-                'Magdagdag ng Emergency Contact',
+                _isEditing ? 'Edit Emergency Contact' : 'Add Emergency Contact',
+                _isEditing
+                    ? 'I-edit ang Emergency Contact'
+                    : 'Magdagdag ng Emergency Contact',
               ),
               style: GoogleFonts.nunitoSans(
                 fontSize: 20,
@@ -823,25 +905,77 @@ class _AddEmergencyContactScreenState extends State<AddEmergencyContactScreen> {
                   SizedBox(height: 2.h),
                   _buildFormCard(theme, isTagalog),
                   SizedBox(height: 3.h),
-                  ElevatedButton.icon(
-                    onPressed: _saveContact,
-                    icon: const Icon(Icons.check, color: Colors.white),
-                    label: Text(
-                      tr(isTagalog, 'Save Contact', 'I-save ang Contact'),
-                      style: GoogleFonts.nunitoSans(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
+                  if (_isEditing)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: _saveContact,
+                            icon: const Icon(Icons.check, color: Colors.white),
+                            label: Text(
+                              tr(isTagalog, 'Save', 'I-save'),
+                              style: GoogleFonts.nunitoSans(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.success,
+                              minimumSize: const Size.fromHeight(52),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: _deleteContact,
+                            icon: const Icon(
+                              Icons.delete_outline,
+                              color: Colors.white,
+                            ),
+                            label: Text(
+                              tr(isTagalog, 'Delete', 'I-delete'),
+                              style: GoogleFonts.nunitoSans(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.errorRed,
+                              minimumSize: const Size.fromHeight(52),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    ElevatedButton.icon(
+                      onPressed: _saveContact,
+                      icon: const Icon(Icons.check, color: Colors.white),
+                      label: Text(
+                        tr(isTagalog, 'Save Contact', 'I-save ang Contact'),
+                        style: GoogleFonts.nunitoSans(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primaryBlue,
+                        minimumSize: const Size.fromHeight(52),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
                       ),
                     ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.primaryBlue,
-                      minimumSize: const Size.fromHeight(52),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -883,8 +1017,12 @@ class _AddEmergencyContactScreenState extends State<AddEmergencyContactScreen> {
                 Text(
                   tr(
                     isTagalog,
-                    'Who should LifeEase call first?',
-                    'Sino ang unang tatawagan ng LifeEase?',
+                    _isEditing
+                        ? 'Update this trusted contact'
+                        : 'Who should LifeEase call first?',
+                    _isEditing
+                        ? 'I-update ang contact na ito'
+                        : 'Sino ang unang tatawagan ng LifeEase?',
                   ),
                   style: GoogleFonts.nunitoSans(
                     fontSize: 17,
@@ -1071,12 +1209,22 @@ class _AddEmergencyContactScreenState extends State<AddEmergencyContactScreen> {
       return;
     }
 
-    Navigator.pop(context, {
-      'name': _nameController.text.trim(),
-      'relationship': _relationship,
-      'phone': _phoneController.text.trim(),
-      'avatarUrl':
-          'https://images.pexels.com/photos/1181519/pexels-photo-1181519.jpeg',
-    });
+    Navigator.pop(
+      context,
+      _EmergencyContactEditResult.save(
+        UserEmergencyContact(
+          name: _nameController.text.trim(),
+          relationship: _relationship,
+          phone: _phoneController.text.trim(),
+          avatarUrl:
+              widget.initialContact?.avatarUrl ??
+              'https://images.pexels.com/photos/1181519/pexels-photo-1181519.jpeg',
+        ),
+      ),
+    );
+  }
+
+  void _deleteContact() {
+    Navigator.pop(context, const _EmergencyContactEditResult.delete());
   }
 }

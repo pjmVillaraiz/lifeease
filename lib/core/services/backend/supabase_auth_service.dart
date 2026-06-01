@@ -19,6 +19,7 @@ class SupabaseAuthService {
   static const String _sessionModeKey = 'auth.sessionMode';
   static const String _userMode = 'user';
   static const String _guestMode = 'guest';
+  static const String _demoMode = 'demo';
 
   SupabaseClient? get _client => SupabaseConfig.maybeClient;
 
@@ -28,12 +29,16 @@ class SupabaseAuthService {
 
   Future<bool> get isGuestSession async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_sessionModeKey) == _guestMode;
+    final mode = prefs.getString(_sessionModeKey);
+    return mode == _guestMode || mode == _demoMode;
   }
 
   Future<bool> shouldStartAtHome() async {
-    if (await isGuestSession) return true;
-    return currentUser != null;
+    final prefs = await SharedPreferences.getInstance();
+    final mode = prefs.getString(_sessionModeKey);
+    if (mode == _guestMode || mode == _demoMode) return true;
+    if (mode == _userMode && _client == null) return true;
+    return _client?.auth.currentSession != null || currentUser != null;
   }
 
   Stream<AuthState> get authStateChanges {
@@ -101,7 +106,8 @@ class SupabaseAuthService {
         data: {
           if (firstName?.trim().isNotEmpty == true)
             'first_name': firstName!.trim(),
-          if (lastName?.trim().isNotEmpty == true) 'last_name': lastName!.trim(),
+          if (lastName?.trim().isNotEmpty == true)
+            'last_name': lastName!.trim(),
           if (displayName.isNotEmpty) 'display_name': displayName,
         },
       );
@@ -173,6 +179,8 @@ class SupabaseAuthService {
       return const LifeEaseAuthResult(success: true, isGuest: true);
     }
   }
+
+  Future<void> rememberDemoSession() => _setSessionMode(_demoMode);
 
   Future<void> sendPasswordReset(String email) async {
     await _client?.auth.resetPasswordForEmail(email);

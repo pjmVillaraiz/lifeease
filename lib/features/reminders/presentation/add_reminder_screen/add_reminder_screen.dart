@@ -6,6 +6,7 @@ import 'package:lifeease/core/services/backend/reminder_repository.dart';
 import 'package:lifeease/core/services/notifications/reminder_notification_service.dart';
 import 'package:lifeease/core/services/tts/tts_language_service.dart';
 import 'package:lifeease/core/utils/app_export.dart';
+import 'package:lifeease/features/reminders/application/location_reminder_service.dart';
 import 'package:lifeease/features/scheduling/domain/rule_based_scheduling_engine.dart';
 import 'package:lifeease/shared/widgets/emergency_fab_widget.dart';
 import './widgets/category_chip_row_widget.dart';
@@ -16,14 +17,22 @@ import './widgets/repeat_settings_widget.dart';
 class AddReminderScreen extends StatefulWidget {
   final int? prefillHour;
   final String? prefillTitle;
+  final String? prefillDescription;
+  final DateTime? prefillDate;
   final TimeOfDay? prefillTime;
+  final String? prefillRepeatType;
+  final int? prefillRepeatIntervalMinutes;
   final Map<String, dynamic>? editReminder;
 
   const AddReminderScreen({
     super.key,
     this.prefillHour,
     this.prefillTitle,
+    this.prefillDescription,
+    this.prefillDate,
     this.prefillTime,
+    this.prefillRepeatType,
+    this.prefillRepeatIntervalMinutes,
     this.editReminder,
   });
 
@@ -36,11 +45,16 @@ class _AddReminderScreenState extends State<AddReminderScreen>
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
   final _descriptionController = TextEditingController();
+  final _locationNameController = TextEditingController();
 
   late DateTime _selectedDate;
   late TimeOfDay _selectedTime;
   String _selectedCategory = 'general';
   bool _isRepeating = false;
+  bool _locationEnabled = false;
+  String _locationTrigger = 'arrive';
+  double? _locationLatitude;
+  double? _locationLongitude;
   int _repeatIntervalMinutes = 60;
   bool _isSaving = false;
   bool _hasChangedSchedule = false;
@@ -83,7 +97,7 @@ class _AddReminderScreenState extends State<AddReminderScreen>
       editReminder?['reminder_time'] ?? editReminder?['scheduledTimeMillis'],
     );
 
-    _selectedDate = editScheduled ?? DateTime.now();
+    _selectedDate = editScheduled ?? widget.prefillDate ?? DateTime.now();
     _selectedTime = editScheduled != null
         ? TimeOfDay.fromDateTime(editScheduled)
         : widget.prefillTime ??
@@ -106,8 +120,22 @@ class _AddReminderScreenState extends State<AddReminderScreen>
       _repeatIntervalMinutes =
           editReminder['repeatIntervalMinutes'] as int? ??
           _repeatMinutesFromType(editReminder['repeat_type']?.toString());
+      _locationEnabled = editReminder['location_enabled'] == true;
+      _locationTrigger = editReminder['location_trigger']?.toString() == 'leave'
+          ? 'leave'
+          : 'arrive';
+      _locationNameController.text =
+          editReminder['location_name']?.toString() ?? '';
+      _locationLatitude = _doubleFrom(editReminder['location_latitude']);
+      _locationLongitude = _doubleFrom(editReminder['location_longitude']);
     } else if (widget.prefillTitle != null) {
       _titleController.text = widget.prefillTitle!;
+      _descriptionController.text = widget.prefillDescription ?? '';
+      final repeatType = widget.prefillRepeatType ?? 'none';
+      _isRepeating = repeatType != 'none';
+      _repeatIntervalMinutes =
+          widget.prefillRepeatIntervalMinutes ??
+          _repeatMinutesFromType(repeatType);
     }
 
     _entranceController = AnimationController(
@@ -132,6 +160,7 @@ class _AddReminderScreenState extends State<AddReminderScreen>
     _entranceController.dispose();
     _titleController.dispose();
     _descriptionController.dispose();
+    _locationNameController.dispose();
     super.dispose();
   }
 
@@ -164,6 +193,11 @@ class _AddReminderScreenState extends State<AddReminderScreen>
     }
     if ((!_isEditing || _hasChangedSchedule) && _isTimeInPast()) {
       setState(() => _timeError = 'Scheduled time cannot be in the past');
+      valid = false;
+    }
+    if (_locationEnabled &&
+        (_locationLatitude == null || _locationLongitude == null)) {
+      setState(() => _timeError = 'Use current location before saving');
       valid = false;
     }
     if (!valid) {
@@ -247,6 +281,12 @@ class _AddReminderScreenState extends State<AddReminderScreen>
       'sync_status': isCanceled ? 'canceled' : 'queued',
       'created_at': createdAt,
       'updated_at': now.toIso8601String(),
+      'location_enabled': _locationEnabled,
+      'location_trigger': _locationTrigger,
+      'location_name': _locationNameController.text.trim(),
+      'location_latitude': _locationLatitude,
+      'location_longitude': _locationLongitude,
+      'location_radius_meters': 180,
     };
 
     await _reminderRepository.saveReminder(savedReminder);
@@ -411,6 +451,31 @@ class _AddReminderScreenState extends State<AddReminderScreen>
     return null;
   }
 
+  double? _doubleFrom(Object? value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
+  }
+
+  Future<void> _useCurrentLocation() async {
+    final location = await LocationReminderService.instance.currentLocation();
+    if (!mounted) return;
+    if (location == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to get current location')),
+      );
+      return;
+    }
+
+    setState(() {
+      _locationLatitude = location.latitude;
+      _locationLongitude = location.longitude;
+      if (_locationNameController.text.trim().isEmpty) {
+        _locationNameController.text = 'Current location';
+      }
+      _timeError = null;
+    });
+  }
+
   String _uuidV4() {
     final random = Random.secure();
     final bytes = List<int>.generate(16, (_) => random.nextInt(256));
@@ -563,6 +628,8 @@ class _AddReminderScreenState extends State<AddReminderScreen>
           const SizedBox(height: 16),
           _buildRepeatSection(theme),
           const SizedBox(height: 20),
+          _buildLocationSection(theme),
+          const SizedBox(height: 20),
           _buildSaveButton(theme),
           const SizedBox(height: 10),
           _buildCancelButton(theme),
@@ -602,6 +669,8 @@ class _AddReminderScreenState extends State<AddReminderScreen>
               _buildCategorySection(theme),
               const SizedBox(height: 16),
               _buildRepeatSection(theme),
+              const SizedBox(height: 20),
+              _buildLocationSection(theme),
               const SizedBox(height: 20),
               Row(
                 children: [
@@ -748,6 +817,83 @@ class _AddReminderScreenState extends State<AddReminderScreen>
         repeatIntervalMinutes: _repeatIntervalMinutes,
         onRepeatingChanged: (v) => setState(() => _isRepeating = v),
         onIntervalChanged: (v) => setState(() => _repeatIntervalMinutes = v),
+      ),
+    );
+  }
+
+  Widget _buildLocationSection(ThemeData theme) {
+    final hasCoordinates =
+        _locationLatitude != null && _locationLongitude != null;
+    return FormSectionCardWidget(
+      title: 'Location Reminder',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(
+              'Trigger by location',
+              style: GoogleFonts.nunitoSans(fontWeight: FontWeight.w700),
+            ),
+            subtitle: Text(
+              'Arrive at or leave a saved place',
+              style: GoogleFonts.nunitoSans(fontSize: 13),
+            ),
+            value: _locationEnabled,
+            onChanged: (value) => setState(() => _locationEnabled = value),
+          ),
+          if (_locationEnabled) ...[
+            const SizedBox(height: 8),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(
+                  value: 'arrive',
+                  icon: Icon(Icons.login),
+                  label: Text('Arrive'),
+                ),
+                ButtonSegment(
+                  value: 'leave',
+                  icon: Icon(Icons.logout),
+                  label: Text('Leave'),
+                ),
+              ],
+              selected: {_locationTrigger},
+              onSelectionChanged: (value) {
+                setState(() => _locationTrigger = value.first);
+              },
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _locationNameController,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(
+                hintText: 'Place name, e.g. Mercury Drug',
+                prefixIcon: Icon(Icons.place_outlined),
+              ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _useCurrentLocation,
+              icon: const Icon(Icons.my_location),
+              label: Text(
+                hasCoordinates
+                    ? 'Update Current Location'
+                    : 'Use Current Location',
+              ),
+            ),
+            if (hasCoordinates) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Saved near ${_locationLatitude!.toStringAsFixed(5)}, '
+                '${_locationLongitude!.toStringAsFixed(5)}',
+                style: GoogleFonts.nunitoSans(
+                  fontSize: 12,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ],
+        ],
       ),
     );
   }

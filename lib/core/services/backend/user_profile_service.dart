@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:lifeease/core/services/backend/supabase_auth_service.dart';
@@ -40,6 +42,36 @@ class UserProfile {
   }
 }
 
+class UserEmergencyContact {
+  final String name;
+  final String relationship;
+  final String phone;
+  final String avatarUrl;
+
+  const UserEmergencyContact({
+    required this.name,
+    required this.relationship,
+    required this.phone,
+    required this.avatarUrl,
+  });
+
+  factory UserEmergencyContact.fromMap(Map<String, dynamic> map) {
+    return UserEmergencyContact(
+      name: map['name']?.toString() ?? '',
+      relationship: map['relationship']?.toString() ?? '',
+      phone: map['phone']?.toString() ?? '',
+      avatarUrl: map['avatarUrl']?.toString() ?? '',
+    );
+  }
+
+  Map<String, String> toMap() => {
+    'name': name,
+    'relationship': relationship,
+    'phone': phone,
+    'avatarUrl': avatarUrl,
+  };
+}
+
 class UserProfileService {
   static const String nameKey = 'profile.name';
   static const String firstNameKey = 'profile.firstName';
@@ -48,6 +80,7 @@ class UserProfileService {
   static const String phoneKey = 'profile.phone';
   static const String birthdateKey = 'profile.birthdate';
   static const String conditionsKey = 'profile.conditions';
+  static const String emergencyContactsKey = 'profile.emergencyContacts';
 
   final SupabaseAuthService _authService;
 
@@ -158,6 +191,51 @@ class UserProfileService {
       'medical_conditions': profile.medicalConditions?.trim(),
       'updated_at': DateTime.now().toIso8601String(),
     });
+  }
+
+  Future<List<UserEmergencyContact>> loadEmergencyContacts() async {
+    final prefs = await SharedPreferences.getInstance();
+    final prefix = await _storagePrefix();
+    final raw = prefs.getString(_scopedKey(prefix, emergencyContactsKey));
+    if (raw == null || raw.trim().isEmpty) return const [];
+
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+
+      return decoded
+          .whereType<Map>()
+          .map(
+            (item) =>
+                UserEmergencyContact.fromMap(Map<String, dynamic>.from(item)),
+          )
+          .where(
+            (contact) =>
+                contact.name.trim().isNotEmpty &&
+                contact.phone.trim().isNotEmpty,
+          )
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> saveEmergencyContacts(
+    List<UserEmergencyContact> contacts,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final prefix = await _storagePrefix();
+    final encoded = jsonEncode(
+      contacts
+          .map((contact) => contact.toMap())
+          .where(
+            (contact) =>
+                contact['name']?.trim().isNotEmpty == true &&
+                contact['phone']?.trim().isNotEmpty == true,
+          )
+          .toList(),
+    );
+    await prefs.setString(_scopedKey(prefix, emergencyContactsKey), encoded);
   }
 
   Future<String> _storagePrefix() async {

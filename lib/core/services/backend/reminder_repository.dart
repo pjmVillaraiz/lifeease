@@ -10,6 +10,9 @@ class ReminderRepository {
   final OfflineSyncService _offline;
   static final StreamController<void> _changes =
       StreamController<void>.broadcast();
+  static List<Map<String, dynamic>>? _memoryCache;
+  static DateTime? _lastRemoteRefresh;
+  static bool _remoteRefreshRunning = false;
 
   ReminderRepository({OfflineSyncService? offline})
     : _offline = offline ?? OfflineSyncService();
@@ -26,6 +29,7 @@ class ReminderRepository {
 
   Future<void> saveReminder(Map<String, dynamic> reminder) async {
     await _offline.saveReminder(reminder);
+    _upsertMemoryCache(reminder);
     notifyChanged();
 
     final client = _client;
@@ -39,8 +43,20 @@ class ReminderRepository {
 
   Future<List<Map<String, dynamic>>> loadReminders() async {
     final localReminders = await _offline.loadReminders();
+    final activeLocal = _activeReminders(localReminders);
+    if (activeLocal.isNotEmpty) {
+      _memoryCache = activeLocal;
+      _refreshRemoteInBackground(activeLocal);
+      return activeLocal;
+    }
+
+    if (_memoryCache != null) {
+      _refreshRemoteInBackground(_memoryCache!);
+      return _memoryCache!;
+    }
+
     final client = _client;
-    if (client == null) return _activeReminders(localReminders);
+    if (client == null) return activeLocal;
     try {
       final rows = await client
           .from('reminders')
@@ -49,9 +65,14 @@ class ReminderRepository {
       final remoteReminders = rows
           .map<Map<String, dynamic>>((row) => Map<String, dynamic>.from(row))
           .toList();
-      return _mergeRemoteAndLocal(remoteReminders, localReminders);
+      final merged = _mergeRemoteAndLocal(remoteReminders, localReminders);
+      _memoryCache = merged;
+      for (final reminder in merged) {
+        await _offline.saveReminder(reminder);
+      }
+      return merged;
     } catch (_) {
-      return _activeReminders(localReminders);
+      return activeLocal;
     }
   }
 
@@ -67,6 +88,7 @@ class ReminderRepository {
 
   Future<void> deleteReminder(String id) async {
     await _offline.deleteReminder(id);
+    _memoryCache?.removeWhere((reminder) => reminder['id']?.toString() == id);
     notifyChanged();
 
     final client = _client;
@@ -322,6 +344,60 @@ class ReminderRepository {
         debugPrint('Reminder sync skipped for ${reminder['id']}: $error');
       }
     }
+  }
+
+  void _refreshRemoteInBackground(List<Map<String, dynamic>> localReminders) {
+    final client = _client;
+    if (client == null || _remoteRefreshRunning) return;
+    final lastRefresh = _lastRemoteRefresh;
+    if (lastRefresh != null &&
+        DateTime.now().difference(lastRefresh) < const Duration(seconds: 20)) {
+      return;
+    }
+
+    _remoteRefreshRunning = true;
+    unawaited(
+      _refreshRemote(client, localReminders).whenComplete(() {
+        _remoteRefreshRunning = false;
+        _lastRemoteRefresh = DateTime.now();
+      }),
+    );
+  }
+
+  Future<void> _refreshRemote(
+    SupabaseClient client,
+    List<Map<String, dynamic>> localReminders,
+  ) async {
+    try {
+      final rows = await client
+          .from('reminders')
+          .select()
+          .order('reminder_time', ascending: true);
+      final remoteReminders = rows
+          .map<Map<String, dynamic>>((row) => Map<String, dynamic>.from(row))
+          .toList();
+      final merged = _mergeRemoteAndLocal(remoteReminders, localReminders);
+      _memoryCache = merged;
+      for (final reminder in merged) {
+        await _offline.saveReminder(reminder);
+      }
+      notifyChanged();
+    } catch (error) {
+      debugPrint('Reminder background refresh skipped: $error');
+    }
+  }
+
+  void _upsertMemoryCache(Map<String, dynamic> reminder) {
+    final id = reminder['id']?.toString();
+    if (id == null) return;
+    final cache = [...?_memoryCache];
+    final index = cache.indexWhere((item) => item['id']?.toString() == id);
+    if (index == -1) {
+      cache.add(reminder);
+    } else {
+      cache[index] = reminder;
+    }
+    _memoryCache = _activeReminders(cache);
   }
 
   List<Map<String, dynamic>> _mergeRemoteAndLocal(

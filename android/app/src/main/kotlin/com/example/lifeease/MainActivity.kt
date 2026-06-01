@@ -1,15 +1,20 @@
 package com.example.lifeease
 
+import android.Manifest
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationManager
 import android.media.AudioAttributes
 import android.os.Build
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import androidx.core.app.ActivityCompat
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -24,6 +29,7 @@ private const val EXTRA_ALARM_ID = "alarmId"
 private const val EXTRA_TRIGGER_AT_MILLIS = "triggerAtMillis"
 private const val EXTRA_TEXT = "text"
 private const val EXTRA_LANGUAGE_CODE = "languageCode"
+private const val LOCATION_PERMISSION_REQUEST = 4101
 
 class MainActivity : FlutterFragmentActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -32,6 +38,7 @@ class MainActivity : FlutterFragmentActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "getTimeZoneName" -> result.success(deviceTimeZoneId())
+                "getCurrentLocation" -> currentLocation(result)
                 "speakReminderNow" -> {
                     val alarmId = call.argument<Int>(EXTRA_ALARM_ID)
                     val text = call.argument<String>(EXTRA_TEXT)
@@ -95,6 +102,58 @@ class MainActivity : FlutterFragmentActivity() {
         return when (zoneId.uppercase(Locale.US)) {
             "GMT", "UTC", "UT" -> "UTC"
             else -> zoneId
+        }
+    }
+
+    private fun currentLocation(result: MethodChannel.Result) {
+        val fineGranted = ActivityCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarseGranted = ActivityCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!fineGranted && !coarseGranted) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                ),
+                LOCATION_PERMISSION_REQUEST,
+            )
+            result.error("permission_required", "Location permission is required.", null)
+            return
+        }
+
+        val manager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val providers = manager.getProviders(true)
+        val bestLocation = providers
+            .mapNotNull { provider -> lastKnownLocation(manager, provider) }
+            .maxByOrNull { it.time }
+
+        if (bestLocation == null) {
+            result.error("location_unavailable", "No current location is available.", null)
+            return
+        }
+
+        result.success(
+            mapOf(
+                "latitude" to bestLocation.latitude,
+                "longitude" to bestLocation.longitude,
+            ),
+        )
+    }
+
+    private fun lastKnownLocation(manager: LocationManager, provider: String): Location? {
+        return try {
+            manager.getLastKnownLocation(provider)
+        } catch (_: SecurityException) {
+            null
+        } catch (_: IllegalArgumentException) {
+            null
         }
     }
 }

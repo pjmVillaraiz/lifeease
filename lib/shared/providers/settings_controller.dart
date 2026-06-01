@@ -14,6 +14,7 @@ class SettingsController extends ChangeNotifier {
   static const String _soundKey = 'soundEnabled';
   static const String _vibrationKey = 'vibrationEnabled';
   static const String _reminderLeadTimeKey = 'reminderLeadTime';
+  static const String _wakeWordKey = 'wakeWordEnabled';
 
   bool darkMode = false;
   bool largeText = false;
@@ -23,6 +24,7 @@ class SettingsController extends ChangeNotifier {
   bool notificationsEnabled = true;
   bool soundEnabled = true;
   bool vibrationEnabled = true;
+  bool wakeWordEnabled = false;
   String reminderLeadTime = '15 minutes';
 
   SettingsController._();
@@ -38,6 +40,7 @@ class SettingsController extends ChangeNotifier {
     controller.notificationsEnabled = prefs.getBool(_notificationsKey) ?? true;
     controller.soundEnabled = prefs.getBool(_soundKey) ?? true;
     controller.vibrationEnabled = prefs.getBool(_vibrationKey) ?? true;
+    controller.wakeWordEnabled = prefs.getBool(_wakeWordKey) ?? false;
     controller.reminderLeadTime =
         prefs.getString(_reminderLeadTimeKey) ?? '15 minutes';
 
@@ -96,6 +99,12 @@ class SettingsController extends ChangeNotifier {
   void updateVibrationEnabled(bool enabled) {
     vibrationEnabled = enabled;
     _saveBool(_vibrationKey, enabled);
+    notifyListeners();
+  }
+
+  void updateWakeWordEnabled(bool enabled) {
+    wakeWordEnabled = enabled;
+    _saveBool(_wakeWordKey, enabled);
     notifyListeners();
   }
 

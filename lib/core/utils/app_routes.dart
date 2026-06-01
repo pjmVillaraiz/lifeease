@@ -35,7 +35,12 @@ class AppRoutes {
       return AddReminderScreen(
         prefillHour: args?['prefillHour'] as int?,
         prefillTitle: args?['prefillTitle'] as String?,
+        prefillDescription: args?['prefillDescription'] as String?,
+        prefillDate: args?['prefillDate'] as DateTime?,
         prefillTime: args?['prefillTime'] as TimeOfDay?,
+        prefillRepeatType: args?['prefillRepeatType'] as String?,
+        prefillRepeatIntervalMinutes:
+            args?['prefillRepeatIntervalMinutes'] as int?,
         editReminder: args?['editReminder'] as Map<String, dynamic>?,
       );
     },

@@ -31,73 +31,68 @@ class AppNavigation extends StatelessWidget {
           animationDuration: const Duration(milliseconds: 250),
           destinations: [
             NavigationDestination(
-              icon: CustomIconWidget(
-                iconName: 'home_outlined',
-                color: theme.colorScheme.onSurface.withAlpha(153),
-                size: 24,
-              ),
-              selectedIcon: CustomIconWidget(
-                iconName: 'home',
-                color: theme.colorScheme.primary,
-                size: 24,
-              ),
+              icon: _animatedIcon(theme, 'home_outlined', 0),
+              selectedIcon: _animatedIcon(theme, 'home', 0, selected: true),
               label: tr(isTagalog, 'Home', 'Tahanan'),
             ),
             NavigationDestination(
-              icon: CustomIconWidget(
-                iconName: 'alarm_outlined',
-                color: theme.colorScheme.onSurface.withAlpha(153),
-                size: 24,
-              ),
-              selectedIcon: CustomIconWidget(
-                iconName: 'alarm',
-                color: theme.colorScheme.primary,
-                size: 24,
+              icon: _animatedIcon(theme, 'description_outlined', 1),
+              selectedIcon: _animatedIcon(
+                theme,
+                'edit_note',
+                1,
+                selected: true,
               ),
               label: tr(isTagalog, 'Reminders', 'Mga Paalala'),
             ),
             NavigationDestination(
-              icon: CustomIconWidget(
-                iconName: 'mic_none',
-                color: theme.colorScheme.onSurface.withAlpha(153),
-                size: 24,
-              ),
-              selectedIcon: CustomIconWidget(
-                iconName: 'mic',
-                color: theme.colorScheme.primary,
-                size: 24,
-              ),
+              icon: _animatedIcon(theme, 'mic_none', 2),
+              selectedIcon: _animatedIcon(theme, 'mic', 2, selected: true),
               label: tr(isTagalog, 'Voice', 'Boses'),
             ),
             NavigationDestination(
-              icon: CustomIconWidget(
-                iconName: 'translate',
-                color: theme.colorScheme.onSurface.withAlpha(153),
-                size: 24,
-              ),
-              selectedIcon: CustomIconWidget(
-                iconName: 'g_translate',
-                color: theme.colorScheme.primary,
-                size: 24,
+              icon: _animatedIcon(theme, 'translate', 3),
+              selectedIcon: _animatedIcon(
+                theme,
+                'translate',
+                3,
+                selected: true,
               ),
               label: tr(isTagalog, 'Translate', 'Isalin'),
             ),
             NavigationDestination(
-              icon: CustomIconWidget(
-                iconName: 'settings_outlined',
-                color: theme.colorScheme.onSurface.withAlpha(153),
-                size: 24,
-              ),
-              selectedIcon: CustomIconWidget(
-                iconName: 'settings',
-                color: theme.colorScheme.primary,
-                size: 24,
-              ),
+              icon: _animatedIcon(theme, 'settings_outlined', 4),
+              selectedIcon: _animatedIcon(theme, 'settings', 4, selected: true),
               label: tr(isTagalog, 'Settings', 'Mga Setting'),
             ),
           ],
         );
       },
+    );
+  }
+
+  Widget _animatedIcon(
+    ThemeData theme,
+    String iconName,
+    int index, {
+    bool selected = false,
+  }) {
+    final isCurrent = currentIndex == index || selected;
+    return AnimatedScale(
+      scale: isCurrent ? 1.16 : 1.0,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      child: AnimatedOpacity(
+        opacity: isCurrent ? 1 : 0.72,
+        duration: const Duration(milliseconds: 180),
+        child: CustomIconWidget(
+          iconName: iconName,
+          color: isCurrent
+              ? theme.colorScheme.primary
+              : theme.colorScheme.onSurface.withAlpha(153),
+          size: isCurrent ? 27 : 24,
+        ),
+      ),
     );
   }
 }

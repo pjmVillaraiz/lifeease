@@ -198,6 +198,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _buildDivider(theme),
             _buildSwitchTile(
               theme,
+              icon: 'mic',
+              iconColor: AppTheme.secondaryTeal,
+              title: tr('Wake Word', 'Wake Word'),
+              subtitle: tr(
+                'Listen for Hey LifeEase or Hi LifeEase',
+                'Makinig sa Hey LifeEase o Hi LifeEase',
+              ),
+              value: _controller.wakeWordEnabled,
+              onChanged: (v) {
+                _controller.updateWakeWordEnabled(v);
+                setState(() {});
+              },
+            ),
+            _buildDivider(theme),
+            _buildSwitchTile(
+              theme,
               icon: 'contrast',
               iconColor: AppTheme.categoryShopping,
               title: tr('High Contrast', 'Mataas na Kontraste'),
@@ -604,18 +620,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 if (result.improvements.isNotEmpty) ...[
                   const SizedBox(height: 8),
-                  ...result.improvements.take(2).map(
-                    (item) => Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: Text(
-                        '- $item',
-                        style: GoogleFonts.nunitoSans(
-                          fontSize: 13,
-                          color: theme.colorScheme.onSurface,
+                  ...result.improvements
+                      .take(2)
+                      .map(
+                        (item) => Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            '- $item',
+                            style: GoogleFonts.nunitoSans(
+                              fontSize: 13,
+                              color: theme.colorScheme.onSurface,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
                 ],
               ],
             ),

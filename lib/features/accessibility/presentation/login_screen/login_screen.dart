@@ -114,6 +114,10 @@ class _LoginScreenState extends State<LoginScreen>
     final isDemoFallback =
         email == 'user@lifeease.ph' && password == 'LifeEase2025';
     if (result.success || isDemoFallback) {
+      if (isDemoFallback && !result.success) {
+        await _authService.rememberDemoSession();
+        if (!mounted) return;
+      }
       setState(() => _isLoading = false);
       Navigator.pushNamedAndRemoveUntil(
         context,

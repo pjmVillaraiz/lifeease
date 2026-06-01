@@ -67,8 +67,8 @@ class _AllRemindersScreenState extends State<AllRemindersScreen>
     if (showLoading) {
       setState(() => _isLoading = true);
     }
-    await _reminderRepository.syncQueuedReminders();
     final rows = await _reminderRepository.loadReminders();
+    unawaited(_reminderRepository.syncQueuedReminders());
     if (!mounted) return;
 
     final loaded = rows.map(ReminderModel.fromMap).toList()

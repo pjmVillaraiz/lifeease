@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -16,10 +17,13 @@ import 'package:lifeease/core/services/backend/user_profile_service.dart';
 import 'package:lifeease/core/services/emergency/emergency_route_processing_module.dart';
 import 'package:lifeease/core/services/notifications/reminder_notification_service.dart';
 import 'package:lifeease/core/services/tts/tts_language_service.dart';
+import 'package:lifeease/features/reminders/application/location_reminder_service.dart';
+import 'package:lifeease/features/reminders/application/reminder_insights_service.dart';
 import 'package:lifeease/features/reminders/presentation/add_reminder_screen/add_reminder_screen.dart';
 import 'package:lifeease/features/sus_evaluation/application/sus_processing_module.dart';
 import 'package:lifeease/features/translation/application/language_translation_processing_module.dart';
 import 'package:lifeease/features/voice/application/speech_processing_module.dart';
+import 'package:lifeease/features/voice/application/voice_assistant_service.dart';
 import 'package:lifeease/features/voice/application/voice_command_processing_module.dart';
 
 import './widgets/reminder_card_widget.dart';
@@ -41,6 +45,11 @@ class ReminderModel {
   final bool isSynced;
   final String lastOccurrenceStatus;
   final String lastOccurrenceDate;
+  final bool locationEnabled;
+  final String locationTrigger;
+  final String locationName;
+  final double? locationLatitude;
+  final double? locationLongitude;
 
   const ReminderModel({
     required this.id,
@@ -59,11 +68,22 @@ class ReminderModel {
     required this.isSynced,
     this.lastOccurrenceStatus = '',
     this.lastOccurrenceDate = '',
+    this.locationEnabled = false,
+    this.locationTrigger = 'arrive',
+    this.locationName = '',
+    this.locationLatitude,
+    this.locationLongitude,
   });
 
   factory ReminderModel.fromMap(Map<String, dynamic> map) {
     final scheduledAt = map['scheduledTimeMillis'] ?? map['reminder_time'];
     final createdValue = map['createdAt'] ?? map['created_at'];
+    final repeatType = map['repeat_type']?.toString() ?? '';
+    final isRepeatingValue =
+        map['isRepeating'] as bool? ??
+        (repeatType.isNotEmpty && repeatType != 'none');
+    final taskStatus = map['task_status']?.toString();
+    final lastOccurrenceStatus = map['last_occurrence_status']?.toString();
 
     return ReminderModel(
       id: map['id']?.toString() ?? DateTime.now().toIso8601String(),
@@ -79,17 +99,14 @@ class ReminderModel {
               map['sync_status'] == 'cancelled' ||
               map['task_status'] == 'cancelled'),
       isSkipped:
-          map['isSkipped'] as bool? ??
-          (map['task_status'] == 'skipped' ||
-              map['last_occurrence_status'] == 'skipped'),
+          !isRepeatingValue &&
+          (map['isSkipped'] as bool? ??
+              (taskStatus == 'skipped' || lastOccurrenceStatus == 'skipped')),
       isMissed:
-          map['isMissed'] as bool? ??
-          (map['task_status'] == 'missed' ||
-              map['last_occurrence_status'] == 'missed'),
-      isRepeating:
-          map['isRepeating'] as bool? ??
-          ((map['repeat_type']?.toString() ?? '').isNotEmpty &&
-              map['repeat_type'] != 'none'),
+          !isRepeatingValue &&
+          (map['isMissed'] as bool? ??
+              (taskStatus == 'missed' || lastOccurrenceStatus == 'missed')),
+      isRepeating: isRepeatingValue,
       repeatIntervalMinutes:
           map['repeatIntervalMinutes'] as int? ??
           _repeatMinutesFromType(map['repeat_type']?.toString()),
@@ -97,8 +114,15 @@ class ReminderModel {
       userUid: map['userUid'] as String? ?? '',
       createdAt: _millisFromValue(createdValue),
       isSynced: map['isSynced'] as bool? ?? map['sync_status'] == 'synced',
-      lastOccurrenceStatus: map['last_occurrence_status']?.toString() ?? '',
+      lastOccurrenceStatus: lastOccurrenceStatus ?? '',
       lastOccurrenceDate: map['last_occurrence_date']?.toString() ?? '',
+      locationEnabled: map['location_enabled'] == true,
+      locationTrigger: map['location_trigger']?.toString() == 'leave'
+          ? 'leave'
+          : 'arrive',
+      locationName: map['location_name']?.toString() ?? '',
+      locationLatitude: _doubleFromValue(map['location_latitude']),
+      locationLongitude: _doubleFromValue(map['location_longitude']),
     );
   }
 
@@ -156,6 +180,11 @@ class ReminderModel {
     'isSynced': isSynced,
     'last_occurrence_status': lastOccurrenceStatus,
     'last_occurrence_date': lastOccurrenceDate,
+    'location_enabled': locationEnabled,
+    'location_trigger': locationTrigger,
+    'location_name': locationName,
+    'location_latitude': locationLatitude,
+    'location_longitude': locationLongitude,
   };
 
   static int _millisFromValue(Object? value) {
@@ -167,6 +196,11 @@ class ReminderModel {
           DateTime.now().millisecondsSinceEpoch;
     }
     return DateTime.now().millisecondsSinceEpoch;
+  }
+
+  static double? _doubleFromValue(Object? value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
   }
 
   static int _repeatMinutesFromType(String? repeatType) {
@@ -219,13 +253,18 @@ class _HomeScreenState extends State<HomeScreen>
   bool _isLoading = true;
   List<ReminderModel> _reminders = [];
   bool _isListening = false;
+  bool _isProcessingVoice = false;
+  bool _voiceListenCancelled = false;
+  String _liveTranscript = '';
   String? _firstName;
 
   late final ReminderRepository _reminderRepository;
   late final SupabaseAuthService _authService;
   late final UserProfileService _profileService;
   late final SpeechProcessingModule _speechModule;
+  late final VoiceAssistantService _assistantService;
   late final VoiceCommandProcessingModule _voiceProcessor;
+  late final ReminderInsightsService _insightsService;
   late final LanguageTranslationProcessingModule _translationProcessor;
   late final EmergencyRouteProcessingModule _emergencyRouteProcessor;
   late final SusProcessingModule _susProcessor;
@@ -261,7 +300,9 @@ class _HomeScreenState extends State<HomeScreen>
     _authService = SupabaseAuthService();
     _profileService = UserProfileService();
     _speechModule = SpeechProcessingModule();
+    _assistantService = const VoiceAssistantService();
     _voiceProcessor = VoiceCommandProcessingModule();
+    _insightsService = const ReminderInsightsService();
     _translationProcessor = LanguageTranslationProcessingModule();
     _emergencyRouteProcessor = EmergencyRouteProcessingModule();
     _susProcessor = SusProcessingModule();
@@ -269,11 +310,12 @@ class _HomeScreenState extends State<HomeScreen>
     _reminderChanges = ReminderRepository.changes.listen((_) {
       _loadReminders(showLoading: false);
     });
-    _statusRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    _statusRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (!mounted) return;
       setState(() {});
       _reconcileDueReminders();
     });
+    LocationReminderService.instance.start();
     _loadReminders();
     _loadProfileName();
   }
@@ -283,6 +325,8 @@ class _HomeScreenState extends State<HomeScreen>
     WidgetsBinding.instance.removeObserver(this);
     _reminderChanges.cancel();
     _statusRefreshTimer?.cancel();
+    unawaited(_speechModule.cancelListening());
+    LocationReminderService.instance.stop();
     _listEntranceController.dispose();
     super.dispose();
   }
@@ -292,6 +336,20 @@ class _HomeScreenState extends State<HomeScreen>
     if (state == AppLifecycleState.resumed) {
       _loadReminders(showLoading: false);
       _loadProfileName();
+      LocationReminderService.instance.start();
+    } else if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.hidden) {
+      unawaited(_speechModule.cancelListening());
+      if (mounted && (_isListening || _isProcessingVoice)) {
+        setState(() {
+          _isListening = false;
+          _isProcessingVoice = false;
+          _voiceListenCancelled = true;
+          _liveTranscript = '';
+        });
+      }
     }
   }
 
@@ -316,8 +374,9 @@ class _HomeScreenState extends State<HomeScreen>
     var rows = await _reminderRepository.loadReminders();
     if (!_hasScheduledLoadedReminders) {
       _hasScheduledLoadedReminders = true;
-      await ReminderNotificationService.instance.schedulePendingReminders(rows);
-      rows = await _reminderRepository.loadReminders();
+      unawaited(
+        ReminderNotificationService.instance.schedulePendingReminders(rows),
+      );
     } else {
       final changed = await ReminderNotificationService.instance
           .reconcileDueReminders(rows);
@@ -395,15 +454,36 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _onSpeakCommand() async {
+    if (_isListening) {
+      await _cancelVoiceListening();
+      return;
+    }
+
     HapticFeedback.heavyImpact();
-    setState(() => _isListening = true);
+    setState(() {
+      _isListening = true;
+      _isProcessingVoice = false;
+      _voiceListenCancelled = false;
+      _liveTranscript = '';
+    });
     try {
-      final spokenText = await _speechModule.listenOnce();
+      final spokenText = await _speechModule.listenOnce(
+        listenFor: const Duration(seconds: 10),
+        onLiveText: (text) {
+          if (!mounted) return;
+          setState(() => _liveTranscript = text);
+        },
+      );
       if (!mounted) return;
 
       if (spokenText != null && spokenText.isNotEmpty) {
+        setState(() {
+          _isListening = false;
+          _isProcessingVoice = true;
+          _liveTranscript = spokenText;
+        });
         await _handleCommandText(spokenText);
-      } else {
+      } else if (!_voiceListenCancelled) {
         _showSnack(
           tr(
             LanguageController.isTagalog.value,
@@ -414,12 +494,53 @@ class _HomeScreenState extends State<HomeScreen>
       }
     } finally {
       if (mounted) {
-        setState(() => _isListening = false);
+        setState(() {
+          _isListening = false;
+          _isProcessingVoice = false;
+          _voiceListenCancelled = false;
+        });
       }
     }
   }
 
+  Future<void> _cancelVoiceListening() async {
+    _voiceListenCancelled = true;
+    await _speechModule.cancelListening();
+    if (!mounted) return;
+    setState(() {
+      _isListening = false;
+      _isProcessingVoice = false;
+      _liveTranscript = '';
+    });
+  }
+
   Future<void> _handleCommandText(String input) async {
+    if (_isReminderCreationWakePhrase(input)) {
+      await _listenForReminderDetails();
+      return;
+    }
+
+    final assistantResult = await _assistantService.handle(input);
+    if (!mounted) return;
+
+    if (assistantResult.intent == AssistantIntent.createReminder &&
+        assistantResult.reminderDraft != null) {
+      await _confirmVoiceReminder(assistantResult.reminderDraft!);
+      return;
+    }
+
+    if (assistantResult.intent == AssistantIntent.reminderQuery &&
+        assistantResult.reminderQueryType != null) {
+      await _answerReminderQuery(assistantResult.reminderQueryType!);
+      return;
+    }
+
+    if (assistantResult.intent == AssistantIntent.internetQuery &&
+        assistantResult.answer != null) {
+      await _respondFromAssistant(assistantResult.answer!);
+      return;
+    }
+
     final result = await _voiceProcessor.parseAsync(input);
     if (!mounted) return;
 
@@ -500,6 +621,397 @@ class _HomeScreenState extends State<HomeScreen>
         setState(() => _currentNavIndex = 0);
       });
     }
+  }
+
+  Future<void> _readTodaySchedule() async {
+    await _respondFromAssistant(_insightsService.spokenSchedule(_reminders));
+  }
+
+  bool _isReminderCreationWakePhrase(String input) {
+    final normalized = input.trim().toLowerCase();
+    return normalized == 'add reminder' ||
+        normalized == 'add a reminder' ||
+        normalized == 'magdagdag ng paalala';
+  }
+
+  Future<void> _listenForReminderDetails() async {
+    final isTagalog = LanguageController.isTagalog.value;
+    await _speechModule.speak(
+      tr(
+        isTagalog,
+        'What should I remind you about?',
+        'Ano ang gusto mong ipaalala?',
+      ),
+    );
+    final details = await _speechModule.listenOnce(
+      listenFor: const Duration(seconds: 8),
+      onLiveText: (text) {
+        if (!mounted) return;
+        setState(() {
+          _isListening = true;
+          _liveTranscript = text;
+        });
+      },
+    );
+    if (details == null || details.trim().isEmpty) {
+      if (_voiceListenCancelled) return;
+      await _respondFromAssistant(
+        tr(
+          isTagalog,
+          'I did not hear the reminder details. Please try again.',
+          'Hindi ko narinig ang detalye ng paalala. Subukan muli.',
+        ),
+      );
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _isListening = false;
+        _isProcessingVoice = true;
+        _liveTranscript = details;
+      });
+    }
+    final draft = _assistantService.parseReminder('Add Reminder $details');
+    if (draft == null) {
+      await _respondFromAssistant(
+        tr(
+          isTagalog,
+          'I could not understand the reminder. Try saying: Take medicine at 10 AM every day.',
+          'Hindi ko naintindihan ang paalala. Subukan: Uminom ng gamot 10 AM araw-araw.',
+        ),
+      );
+      return;
+    }
+
+    await _confirmVoiceReminder(draft);
+  }
+
+  Future<void> _confirmVoiceReminder(VoiceReminderDraft draft) async {
+    final isTagalog = LanguageController.isTagalog.value;
+    final action = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (ctx) => Scaffold(
+          appBar: AppBar(
+            title: Text(
+              tr(isTagalog, 'Confirm Reminder', 'Kumpirmahin ang Paalala'),
+            ),
+          ),
+          body: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildDraftDetail(
+                    tr(isTagalog, 'Title', 'Pamagat'),
+                    draft.title,
+                  ),
+                  if (draft.note.isNotEmpty)
+                    _buildDraftDetail(
+                      tr(isTagalog, 'Note', 'Tala'),
+                      draft.note,
+                    ),
+                  _buildDraftDetail(
+                    tr(isTagalog, 'Date and Time', 'Petsa at Oras'),
+                    DateFormat('MMM d, yyyy h:mm a').format(draft.scheduledAt),
+                  ),
+                  _buildDraftDetail(
+                    tr(isTagalog, 'Frequency', 'Dalas'),
+                    draft.frequencyLabel,
+                  ),
+                  const Spacer(),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(ctx, 'cancel'),
+                          child: Text(tr(isTagalog, 'Cancel', 'Kanselahin')),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(ctx, 'edit'),
+                          child: Text(tr(isTagalog, 'Edit', 'I-edit')),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () => Navigator.pop(ctx, 'save'),
+                          child: Text(tr(isTagalog, 'Save', 'I-save')),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    if (action == 'save') {
+      await _saveVoiceReminder(draft);
+    } else if (action == 'edit') {
+      await _editVoiceReminderDraft(draft);
+    }
+  }
+
+  Widget _buildDraftDetail(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: GoogleFonts.nunitoSans(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: GoogleFonts.nunitoSans(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _editVoiceReminderDraft(VoiceReminderDraft draft) async {
+    final updated = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AddReminderScreen(
+          prefillTitle: draft.title,
+          prefillDescription: draft.note,
+          prefillDate: DateTime(
+            draft.scheduledAt.year,
+            draft.scheduledAt.month,
+            draft.scheduledAt.day,
+          ),
+          prefillTime: TimeOfDay.fromDateTime(draft.scheduledAt),
+          prefillRepeatType: draft.repeatType,
+          prefillRepeatIntervalMinutes: draft.repeatIntervalMinutes,
+        ),
+      ),
+    );
+
+    if (updated == true && mounted) {
+      await _loadReminders(showLoading: false);
+    }
+  }
+
+  Future<void> _saveVoiceReminder(VoiceReminderDraft draft) async {
+    if (_hasDuplicateVoiceReminder(draft)) {
+      await _respondFromAssistant(
+        tr(
+          LanguageController.isTagalog.value,
+          'That reminder already exists, so I did not create a duplicate.',
+          'May kaparehong paalala na, kaya hindi ako gumawa ng duplicate.',
+        ),
+      );
+      return;
+    }
+
+    final now = DateTime.now();
+    final reminder = {
+      'id': _uuidV4(),
+      'title': draft.title,
+      'description': draft.note,
+      'reminder_time': draft.scheduledAt.toIso8601String(),
+      'scheduledTimeMillis': draft.scheduledAt.millisecondsSinceEpoch,
+      'category': _categoryForVoiceReminder(draft.title),
+      'repeat_type': draft.repeatType,
+      'isRepeating': draft.isRepeating,
+      'repeatIntervalMinutes': draft.repeatIntervalMinutes,
+      'priority': _categoryForVoiceReminder(draft.title) == 'pill'
+          ? 'high'
+          : 'normal',
+      'is_completed': false,
+      'isCompleted': false,
+      'is_canceled': false,
+      'isCanceled': false,
+      'sync_status': 'queued',
+      'created_at': now.toIso8601String(),
+      'updated_at': now.toIso8601String(),
+      'source': 'voice_assistant',
+    };
+
+    await _reminderRepository.saveReminder(reminder);
+    await ReminderNotificationService.instance.scheduleReminder(reminder);
+    await _loadReminders(showLoading: false);
+
+    await _respondFromAssistant(
+      tr(
+        LanguageController.isTagalog.value,
+        'Reminder saved: ${draft.title} at ${DateFormat('h:mm a').format(draft.scheduledAt)}.',
+        'Na-save ang paalala: ${draft.title} sa ${DateFormat('h:mm a').format(draft.scheduledAt)}.',
+      ),
+    );
+  }
+
+  bool _hasDuplicateVoiceReminder(VoiceReminderDraft draft) {
+    return _reminders.any((reminder) {
+      final sameTitle =
+          reminder.title.trim().toLowerCase() ==
+          draft.title.trim().toLowerCase();
+      final sameTime =
+          (reminder.scheduledTimeMillis -
+                  draft.scheduledAt.millisecondsSinceEpoch)
+              .abs() <
+          const Duration(minutes: 1).inMilliseconds;
+      final sameRepeat =
+          reminder.repeatIntervalMinutes == draft.repeatIntervalMinutes;
+      return sameTitle && sameTime && sameRepeat && !reminder.isCanceled;
+    });
+  }
+
+  Future<void> _answerReminderQuery(ReminderQueryType type) async {
+    final isTagalog = LanguageController.isTagalog.value;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final pending =
+        _reminders
+            .where(
+              (r) =>
+                  !r.isCompleted &&
+                  !r.isCompletedToday &&
+                  !r.isCanceled &&
+                  !r.isSkippedToday &&
+                  !r.isMissedToday &&
+                  r.scheduledTimeMillis >= now,
+            )
+            .toList()
+          ..sort(
+            (a, b) => a.scheduledTimeMillis.compareTo(b.scheduledTimeMillis),
+          );
+
+    late final String answer;
+    switch (type) {
+      case ReminderQueryType.today:
+        answer = _insightsService.spokenSchedule(_reminders);
+      case ReminderQueryType.next:
+        answer = pending.isEmpty
+            ? tr(
+                isTagalog,
+                'You have no upcoming reminders.',
+                'Wala kang paparating na paalala.',
+              )
+            : tr(
+                isTagalog,
+                'Your next reminder is ${pending.first.title} at ${DateFormat('h:mm a').format(DateTime.fromMillisecondsSinceEpoch(pending.first.scheduledTimeMillis))}.',
+                'Ang susunod mong paalala ay ${pending.first.title} sa ${DateFormat('h:mm a').format(DateTime.fromMillisecondsSinceEpoch(pending.first.scheduledTimeMillis))}.',
+              );
+      case ReminderQueryType.medicineNow:
+        final medicine = pending.where(_isMedicationReminder).toList();
+        answer = medicine.isEmpty
+            ? tr(
+                isTagalog,
+                'I do not see medicine due right now.',
+                'Wala akong nakikitang gamot na kailangang inumin ngayon.',
+              )
+            : tr(
+                isTagalog,
+                'Your next medicine reminder is ${medicine.first.title} at ${DateFormat('h:mm a').format(DateTime.fromMillisecondsSinceEpoch(medicine.first.scheduledTimeMillis))}.',
+                'Ang susunod mong paalala sa gamot ay ${medicine.first.title} sa ${DateFormat('h:mm a').format(DateTime.fromMillisecondsSinceEpoch(medicine.first.scheduledTimeMillis))}.',
+              );
+      case ReminderQueryType.pendingCount:
+        answer = tr(
+          isTagalog,
+          'You have ${pending.length} pending reminders.',
+          'Mayroon kang ${pending.length} na nakabinbing paalala.',
+        );
+    }
+
+    await _respondFromAssistant(answer);
+  }
+
+  Future<void> _respondFromAssistant(String answer) async {
+    if (answer.trim().isEmpty) return;
+    _showAssistantResponse(answer);
+    await _speechModule.speak(answer);
+  }
+
+  void _showAssistantResponse(String answer) {
+    if (!mounted) return;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                tr(
+                  LanguageController.isTagalog.value,
+                  'Voice Assistant',
+                  'Voice Assistant',
+                ),
+                style: GoogleFonts.nunitoSans(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(answer, style: GoogleFonts.nunitoSans(fontSize: 15)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool _isMedicationReminder(ReminderModel reminder) {
+    final text = '${reminder.title} ${reminder.description}'.toLowerCase();
+    return reminder.category.toLowerCase() == 'pill' ||
+        text.contains('medicine') ||
+        text.contains('medication') ||
+        text.contains('gamot') ||
+        text.contains('vitamin');
+  }
+
+  String _categoryForVoiceReminder(String title) {
+    final lower = title.toLowerCase();
+    if (lower.contains('medicine') ||
+        lower.contains('medication') ||
+        lower.contains('gamot') ||
+        lower.contains('vitamin')) {
+      return 'pill';
+    }
+    if (lower.contains('doctor') || lower.contains('appointment')) {
+      return 'appointment';
+    }
+    if (lower.contains('water') || lower.contains('drink')) return 'food';
+    if (lower.contains('buy') || lower.contains('groceries')) return 'shopping';
+    return 'general';
+  }
+
+  String _uuidV4() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    String byteToHex(int byte) => byte.toRadixString(16).padLeft(2, '0');
+    final hex = bytes.map(byteToHex).join();
+    return '${hex.substring(0, 8)}-'
+        '${hex.substring(8, 12)}-'
+        '${hex.substring(12, 16)}-'
+        '${hex.substring(16, 20)}-'
+        '${hex.substring(20)}';
   }
 
   TimeOfDay? _timeOfDayFromVoiceTime(String? value) {
@@ -627,10 +1139,19 @@ class _HomeScreenState extends State<HomeScreen>
                   SliverToBoxAdapter(child: _buildHeader(theme, isTagalog)),
                   SliverToBoxAdapter(child: _buildTopAction(theme, isTagalog)),
                   SliverToBoxAdapter(
+                    child: _buildVoiceStatusPanel(theme, isTagalog),
+                  ),
+                  SliverToBoxAdapter(
                     child: _buildSusShortcut(theme, isTagalog),
                   ),
                   SliverToBoxAdapter(
                     child: _buildStatusCards(theme, isTagalog),
+                  ),
+                  SliverToBoxAdapter(
+                    child: _buildReminderAnalytics(theme, isTagalog),
+                  ),
+                  SliverToBoxAdapter(
+                    child: _buildTodayScheduleSummary(theme, isTagalog),
                   ),
                   SliverToBoxAdapter(
                     child: _buildSectionTitle(theme, isTagalog),
@@ -703,16 +1224,128 @@ class _HomeScreenState extends State<HomeScreen>
               ],
             ),
           ),
-          IconButton(
-            icon: Icon(
-              _isListening ? Icons.mic : Icons.mic_none,
-              size: 32,
-              color: _isListening ? Colors.red : theme.colorScheme.primary,
-            ),
-            onPressed: _onSpeakCommand,
-            tooltip: 'Voice Assistant',
-          ),
+          _buildVoiceButton(theme, isTagalog),
         ],
+      ),
+    );
+  }
+
+  Widget _buildVoiceButton(ThemeData theme, bool isTagalog) {
+    final active = _isListening || _isProcessingVoice;
+    final color = _isListening
+        ? AppTheme.errorRed
+        : _isProcessingVoice
+        ? AppTheme.warning
+        : theme.colorScheme.primary;
+
+    return Tooltip(
+      message: tr(isTagalog, 'Voice Assistant', 'Voice Assistant'),
+      child: InkWell(
+        onTap: _isProcessingVoice
+            ? null
+            : (_isListening ? _cancelVoiceListening : _onSpeakCommand),
+        borderRadius: BorderRadius.circular(32),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          width: 58,
+          height: 58,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: color.withAlpha(active ? 35 : 20),
+            border: Border.all(color: color, width: active ? 3 : 2),
+            boxShadow: active
+                ? [
+                    BoxShadow(
+                      color: color.withAlpha(90),
+                      blurRadius: _isListening ? 18 : 8,
+                      spreadRadius: _isListening ? 4 : 1,
+                    ),
+                  ]
+                : null,
+          ),
+          child: _isProcessingVoice
+              ? Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    color: color,
+                  ),
+                )
+              : Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    if (_isListening) ...[
+                      Icon(Icons.graphic_eq, color: color.withAlpha(120)),
+                      TweenAnimationBuilder<double>(
+                        tween: Tween(begin: 0.82, end: 1.16),
+                        duration: const Duration(milliseconds: 650),
+                        builder: (context, scale, child) {
+                          return Transform.scale(scale: scale, child: child);
+                        },
+                        onEnd: () {
+                          if (mounted && _isListening) setState(() {});
+                        },
+                        child: Icon(Icons.mic, color: color, size: 30),
+                      ),
+                    ] else
+                      Icon(Icons.mic, color: color, size: 28),
+                  ],
+                ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVoiceStatusPanel(ThemeData theme, bool isTagalog) {
+    if (!_isListening && !_isProcessingVoice && _liveTranscript.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final title = _isListening
+        ? tr(isTagalog, 'Listening...', 'Nakikinig...')
+        : _isProcessingVoice
+        ? tr(isTagalog, 'Processing...', 'Pinoproseso...')
+        : tr(isTagalog, 'Voice Result', 'Resulta ng Boses');
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.primaryContainer.withAlpha(120),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              _isListening ? Icons.graphic_eq : Icons.mic,
+              color: theme.colorScheme.primary,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: GoogleFonts.nunitoSans(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  if (_liveTranscript.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      _liveTranscript,
+                      style: GoogleFonts.nunitoSans(fontSize: 14),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1069,6 +1702,215 @@ class _HomeScreenState extends State<HomeScreen>
               fontSize: 16,
               fontWeight: FontWeight.w600,
               color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReminderAnalytics(ThemeData theme, bool isTagalog) {
+    final daily = _insightsService.statsFor(
+      _reminders,
+      period: ReminderStatsPeriod.day,
+    );
+    final weekly = _insightsService.statsFor(
+      _reminders,
+      period: ReminderStatsPeriod.week,
+    );
+    final monthly = _insightsService.statsFor(
+      _reminders,
+      period: ReminderStatsPeriod.month,
+    );
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest.withAlpha(120),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              tr(isTagalog, 'Reminder Statistics', 'Estadistika ng Paalala'),
+              style: GoogleFonts.nunitoSans(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildStatsColumn(
+                    theme,
+                    tr(isTagalog, 'Today', 'Ngayon'),
+                    daily,
+                  ),
+                ),
+                Expanded(
+                  child: _buildStatsColumn(
+                    theme,
+                    tr(isTagalog, 'Week', 'Linggo'),
+                    weekly,
+                  ),
+                ),
+                Expanded(
+                  child: _buildStatsColumn(
+                    theme,
+                    tr(isTagalog, 'Month', 'Buwan'),
+                    monthly,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatsColumn(ThemeData theme, String label, ReminderStats stats) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.nunitoSans(
+            fontSize: 13,
+            fontWeight: FontWeight.w800,
+            color: theme.colorScheme.primary,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Total ${stats.total}',
+          style: GoogleFonts.nunitoSans(fontSize: 12),
+        ),
+        Text(
+          '${stats.completionRate}% done',
+          style: GoogleFonts.nunitoSans(fontSize: 12),
+        ),
+        Text(
+          '${stats.medicationAdherence}% meds',
+          style: GoogleFonts.nunitoSans(fontSize: 12),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTodayScheduleSummary(ThemeData theme, bool isTagalog) {
+    final schedule = _insightsService.todaySchedule(_reminders);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    tr(isTagalog, "Today's Schedule", 'Iskedyul Ngayon'),
+                    style: GoogleFonts.nunitoSans(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _readTodaySchedule,
+                  icon: const Icon(Icons.volume_up),
+                  label: Text(
+                    tr(
+                      isTagalog,
+                      "Read Today's Schedule",
+                      'Basahin ang Iskedyul Ngayon',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (schedule.isEmpty)
+              Text(
+                tr(
+                  isTagalog,
+                  'No reminders scheduled today.',
+                  'Walang paalala ngayong araw.',
+                ),
+                style: GoogleFonts.nunitoSans(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              )
+            else
+              ...schedule
+                  .take(6)
+                  .map(
+                    (reminder) => _buildScheduleRow(theme, isTagalog, reminder),
+                  ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildScheduleRow(
+    ThemeData theme,
+    bool isTagalog,
+    ReminderModel reminder,
+  ) {
+    final scheduled = DateTime.fromMillisecondsSinceEpoch(
+      reminder.scheduledTimeMillis,
+    );
+    final done = reminder.isCompleted || reminder.isCompletedToday;
+    final missed =
+        reminder.isMissedToday ||
+        (!done &&
+            !reminder.isCanceled &&
+            reminder.scheduledTimeMillis <
+                DateTime.now().millisecondsSinceEpoch);
+    final icon = done
+        ? Icons.check_circle
+        : missed
+        ? Icons.error_outline
+        : Icons.radio_button_unchecked;
+    final color = done
+        ? AppTheme.success
+        : missed
+        ? AppTheme.errorRed
+        : theme.colorScheme.primary;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: color),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 74,
+            child: Text(
+              DateFormat('h:mm a').format(scheduled),
+              style: GoogleFonts.nunitoSans(fontWeight: FontWeight.w800),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              reminder.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.nunitoSans(fontSize: 14),
             ),
           ),
         ],

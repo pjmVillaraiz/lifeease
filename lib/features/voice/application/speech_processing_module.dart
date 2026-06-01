@@ -13,30 +13,44 @@ class SpeechProcessingModule {
   final WhisperApiService _whisper = WhisperApiService();
   final InworldTtsService _inworldTts = InworldTtsService();
 
-  bool _isReady = false;
+  bool _isSpeechReady = false;
+  bool _isTtsReady = false;
+  bool _cancelRequested = false;
   final List<String> _transcriptHistory = [];
 
   List<String> get transcriptHistory => List.unmodifiable(_transcriptHistory);
 
   Future<bool> initialize() async {
-    if (_isReady) return true;
+    final speechReady = await _initializeSpeech();
+    await _initializeTts();
+    return speechReady;
+  }
+
+  Future<bool> _initializeSpeech() async {
+    if (_isSpeechReady) return true;
     final available = await _speech.initialize(
       onError: (error) => debugPrint('Speech recognition error: $error'),
       onStatus: (status) => debugPrint('Speech recognition status: $status'),
     );
+    _isSpeechReady = available;
+    return available;
+  }
+
+  Future<void> _initializeTts() async {
+    if (_isTtsReady) return;
     await _tts.setSpeechRate(0.48);
     await _tts.setPitch(1.0);
     await TtsLanguageService.applyCurrentLanguage(_tts);
-    _isReady = available;
-    return available;
+    _isTtsReady = true;
   }
 
   Future<String?> listenOnce({
     Duration listenFor = const Duration(seconds: 6),
     ValueChanged<String>? onLiveText,
   }) async {
-    final ok = await initialize();
+    final ok = await _initializeSpeech();
     if (!ok) return null;
+    _cancelRequested = false;
     if (_speech.isListening) {
       await _speech.stop();
     }
@@ -44,18 +58,37 @@ class SpeechProcessingModule {
     String captured = "";
     await _speech.listen(
       listenFor: listenFor,
+      listenOptions: SpeechListenOptions(partialResults: true),
       onResult: (result) {
         captured = result.recognizedWords;
         onLiveText?.call(captured);
       },
     );
-    await Future<void>.delayed(listenFor + const Duration(milliseconds: 600));
+    final startedAt = DateTime.now();
+    while (!_cancelRequested &&
+        DateTime.now().difference(startedAt) <
+            listenFor + const Duration(milliseconds: 600)) {
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+    }
+    if (_cancelRequested) {
+      await _speech.cancel();
+      _cancelRequested = false;
+      return null;
+    }
     await _speech.stop();
     final clean = captured.trim();
     if (clean.isEmpty) return null;
     _transcriptHistory.insert(0, clean);
     if (_transcriptHistory.length > 20) _transcriptHistory.removeLast();
     return clean;
+  }
+
+  Future<void> cancelListening() async {
+    _cancelRequested = true;
+    if (_speech.isListening) {
+      await _speech.cancel();
+    }
+    await _speech.stop();
   }
 
   Future<WhisperTranscript> transcribeBatchAudio({
@@ -89,7 +122,7 @@ class SpeechProcessingModule {
       // The service is API-ready. Flutter playback of returned audio can be
       // wired to an audio player package when production dependencies allow it.
     }
-    await initialize();
+    await _initializeTts();
     await _tts.setSpeechRate(speed);
     await _tts.setVolume(volume);
     await TtsLanguageService.applyCurrentLanguage(_tts);

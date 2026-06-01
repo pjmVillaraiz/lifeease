@@ -86,6 +86,16 @@ class ReminderRepository {
     return null;
   }
 
+  Future<List<Map<String, dynamic>>> loadAdherenceHistory({
+    DateTime? start,
+    DateTime? end,
+  }) {
+    return _offline.loadAdherenceHistory(
+      startDateKey: start == null ? null : _dateKey(start),
+      endDateKey: end == null ? null : _dateKey(end),
+    );
+  }
+
   Future<void> deleteReminder(String id) async {
     await _offline.deleteReminder(id);
     _memoryCache?.removeWhere((reminder) => reminder['id']?.toString() == id);
@@ -122,6 +132,7 @@ class ReminderRepository {
       'sync_status': 'queued',
       'completed_at': DateTime.now().toIso8601String(),
     };
+    await _recordAdherenceOccurrence(updated, 'completed');
     await _offline.saveReminder(updated);
     notifyChanged();
 
@@ -212,6 +223,7 @@ class ReminderRepository {
       'skipped_at': DateTime.now().toIso8601String(),
       'sync_status': 'queued',
     };
+    await _recordAdherenceOccurrence(updated, 'skipped');
     await _offline.saveReminder(updated);
     notifyChanged();
 
@@ -262,6 +274,7 @@ class ReminderRepository {
       'missed_at': DateTime.now().toIso8601String(),
       'sync_status': 'queued',
     };
+    await _recordAdherenceOccurrence(updated, 'missed');
     await _offline.saveReminder(updated);
     notifyChanged();
 
@@ -464,6 +477,7 @@ class ReminderRepository {
     if (id == null) return;
 
     final nextScheduledAt = _nextOccurrenceAfterNow(reminder);
+    await _recordAdherenceOccurrence(reminder, status);
     final updated = {
       ...reminder,
       'is_completed': false,
@@ -579,6 +593,34 @@ class ReminderRepository {
     final month = date.month.toString().padLeft(2, '0');
     final day = date.day.toString().padLeft(2, '0');
     return '${date.year}-$month-$day';
+  }
+
+  Future<void> _recordAdherenceOccurrence(
+    Map<String, dynamic> reminder,
+    String status,
+  ) async {
+    final id = reminder['id']?.toString();
+    if (id == null || id.isEmpty) return;
+
+    final scheduledAt =
+        _dateTimeFromValue(
+          reminder['reminder_time'] ?? reminder['scheduledTimeMillis'],
+        ) ??
+        DateTime.now();
+    final occurrenceId = '$id.${scheduledAt.millisecondsSinceEpoch}';
+    await _offline.saveAdherenceEntry({
+      'id': occurrenceId,
+      'reminder_id': id,
+      'title': reminder['title']?.toString() ?? 'Reminder',
+      'description': reminder['description']?.toString() ?? '',
+      'category': reminder['category']?.toString() ?? 'general',
+      'date_key': _dateKey(scheduledAt),
+      'scheduled_at': scheduledAt.millisecondsSinceEpoch,
+      'scheduled_time': scheduledAt.toIso8601String(),
+      'status': status,
+      'repeat_type': reminder['repeat_type']?.toString() ?? 'none',
+      'recorded_at': DateTime.now().toIso8601String(),
+    });
   }
 
   Map<String, dynamic> _remoteReminder(

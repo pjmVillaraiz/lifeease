@@ -33,6 +33,8 @@ class _AllRemindersScreenState extends State<AllRemindersScreen>
   bool _isLoading = true;
   ReminderFilter _filter = ReminderFilter.all;
   List<ReminderModel> _reminders = [];
+  List<Map<String, dynamic>> _adherenceHistory = [];
+  DateTime _selectedDate = DateTime.now();
   late final StreamSubscription<void> _reminderChanges;
 
   String tr(bool isTagalog, String en, String tl) => isTagalog ? tl : en;
@@ -68,6 +70,7 @@ class _AllRemindersScreenState extends State<AllRemindersScreen>
       setState(() => _isLoading = true);
     }
     final rows = await _reminderRepository.loadReminders();
+    final history = await _reminderRepository.loadAdherenceHistory();
     unawaited(_reminderRepository.syncQueuedReminders());
     if (!mounted) return;
 
@@ -76,6 +79,7 @@ class _AllRemindersScreenState extends State<AllRemindersScreen>
 
     setState(() {
       _reminders = loaded;
+      _adherenceHistory = history;
       _isLoading = false;
     });
   }
@@ -226,6 +230,9 @@ class _AllRemindersScreenState extends State<AllRemindersScreen>
               physics: const AlwaysScrollableScrollPhysics(),
               slivers: [
                 SliverToBoxAdapter(child: _buildSummary(theme, isTagalog)),
+                SliverToBoxAdapter(
+                  child: _buildAdherenceHistory(theme, isTagalog),
+                ),
                 SliverToBoxAdapter(child: _buildFilters(theme, isTagalog)),
                 _buildReminderList(theme, isTagalog),
                 const SliverToBoxAdapter(child: SizedBox(height: 96)),
@@ -251,6 +258,7 @@ class _AllRemindersScreenState extends State<AllRemindersScreen>
   }
 
   Widget _buildSummary(ThemeData theme, bool isTagalog) {
+    final total = _reminders.length;
     final pending = _reminders
         .where(
           (r) =>
@@ -268,6 +276,9 @@ class _AllRemindersScreenState extends State<AllRemindersScreen>
     final missed = _reminders
         .where((r) => r.isMissedToday || _isMissed(r))
         .length;
+    final completionRate = total == 0
+        ? 0
+        : ((completed / total) * 100).round().clamp(0, 100);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
@@ -277,36 +288,319 @@ class _AllRemindersScreenState extends State<AllRemindersScreen>
           color: AppTheme.primaryContainer,
           borderRadius: BorderRadius.circular(16),
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildSummaryItem(
-              theme,
-              label: tr(isTagalog, 'Pending', 'Pending'),
-              count: pending,
-              icon: Icons.pending_actions_rounded,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      tr(
+                        isTagalog,
+                        'Reminder Statistics',
+                        'Estadistika ng Paalala',
+                      ),
+                      style: GoogleFonts.nunitoSans(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                        color: theme.colorScheme.onSurface,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${tr(isTagalog, 'Completion', 'Natapos')}: '
+                    '$completionRate%',
+                    style: GoogleFonts.nunitoSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.primaryBlue,
+                    ),
+                  ),
+                ],
+              ),
             ),
-            _buildSummaryItem(
-              theme,
-              label: tr(isTagalog, 'Done', 'Tapos'),
-              count: completed,
-              icon: Icons.check_circle_outline_rounded,
-            ),
-            _buildSummaryItem(
-              theme,
-              label: tr(isTagalog, 'Skipped', 'Laktaw'),
-              count: skipped,
-              icon: Icons.skip_next_outlined,
-            ),
-            _buildSummaryItem(
-              theme,
-              label: tr(isTagalog, 'Missed', 'Miss'),
-              count: missed,
-              icon: Icons.error_outline_rounded,
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                _buildSummaryItem(
+                  theme,
+                  label: tr(isTagalog, 'Total', 'Lahat'),
+                  count: total,
+                  icon: Icons.list_alt_rounded,
+                ),
+                _buildSummaryItem(
+                  theme,
+                  label: tr(isTagalog, 'Pending', 'Pending'),
+                  count: pending,
+                  icon: Icons.pending_actions_rounded,
+                ),
+                _buildSummaryItem(
+                  theme,
+                  label: tr(isTagalog, 'Done', 'Tapos'),
+                  count: completed,
+                  icon: Icons.check_circle_outline_rounded,
+                ),
+                _buildSummaryItem(
+                  theme,
+                  label: tr(isTagalog, 'Skipped', 'Laktaw'),
+                  count: skipped,
+                  icon: Icons.skip_next_outlined,
+                ),
+                _buildSummaryItem(
+                  theme,
+                  label: tr(isTagalog, 'Missed', 'Miss'),
+                  count: missed,
+                  icon: Icons.error_outline_rounded,
+                ),
+              ],
             ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildAdherenceHistory(ThemeData theme, bool isTagalog) {
+    final entries = _timelineEntriesForDate(_selectedDate);
+    final completed = entries.where((e) => e.status == 'completed').length;
+    final score = entries.isEmpty
+        ? 0
+        : ((completed / entries.length) * 100).round().clamp(0, 100);
+    final weekScore = _adherenceScoreForRange(
+      _selectedDate.subtract(Duration(days: _selectedDate.weekday - 1)),
+      _selectedDate.add(Duration(days: 7 - _selectedDate.weekday)),
+    );
+    final monthStart = DateTime(_selectedDate.year, _selectedDate.month);
+    final monthEnd = DateTime(_selectedDate.year, _selectedDate.month + 1, 0);
+    final monthScore = _adherenceScoreForRange(monthStart, monthEnd);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    tr(
+                      isTagalog,
+                      'Adherence History',
+                      'Kasaysayan ng Pagsunod',
+                    ),
+                    style: GoogleFonts.nunitoSans(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _pickHistoryDate,
+                  icon: const Icon(Icons.calendar_month_outlined),
+                  label: Text(_dateFormat.format(_selectedDate)),
+                ),
+              ],
+            ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _buildQuickDateChip(
+                  theme,
+                  label: tr(isTagalog, 'Today', 'Ngayon'),
+                  date: DateTime.now(),
+                ),
+                _buildQuickDateChip(
+                  theme,
+                  label: tr(isTagalog, 'Yesterday', 'Kahapon'),
+                  date: DateTime.now().subtract(const Duration(days: 1)),
+                ),
+                _buildQuickDateChip(
+                  theme,
+                  label: tr(isTagalog, 'Last Week', 'Nakaraang Linggo'),
+                  date: DateTime.now().subtract(const Duration(days: 7)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _AdherenceMetric(
+                    label: tr(isTagalog, 'Daily', 'Araw'),
+                    value: '$score%',
+                  ),
+                ),
+                Expanded(
+                  child: _AdherenceMetric(
+                    label: tr(isTagalog, 'Weekly', 'Linggo'),
+                    value: '$weekScore%',
+                  ),
+                ),
+                Expanded(
+                  child: _AdherenceMetric(
+                    label: tr(isTagalog, 'Monthly', 'Buwan'),
+                    value: '$monthScore%',
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Text(
+              tr(isTagalog, 'Timeline', 'Timeline'),
+              style: GoogleFonts.nunitoSans(
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (entries.isEmpty)
+              Text(
+                tr(
+                  isTagalog,
+                  'No reminder activity for this date.',
+                  'Walang activity ng paalala sa petsang ito.',
+                ),
+                style: GoogleFonts.nunitoSans(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              )
+            else
+              ...entries.map(
+                (entry) => _AdherenceTimelineRow(
+                  entry: entry,
+                  timeFormat: _timeFormat,
+                  isTagalog: isTagalog,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickDateChip(
+    ThemeData theme, {
+    required String label,
+    required DateTime date,
+  }) {
+    final selected = _isSameDay(_selectedDate, date);
+    return ChoiceChip(
+      selected: selected,
+      label: Text(label),
+      onSelected: (_) => setState(() => _selectedDate = date),
+      selectedColor: AppTheme.primaryBlue,
+      backgroundColor: theme.colorScheme.surfaceContainerHighest,
+      labelStyle: GoogleFonts.nunitoSans(
+        fontWeight: FontWeight.w800,
+        color: selected ? Colors.white : theme.colorScheme.onSurfaceVariant,
+      ),
+    );
+  }
+
+  Future<void> _pickHistoryDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (picked != null && mounted) {
+      setState(() => _selectedDate = picked);
+    }
+  }
+
+  List<_AdherenceEntry> _timelineEntriesForDate(DateTime date) {
+    final dateKey = _dateKey(date);
+    final entries = <String, _AdherenceEntry>{};
+
+    for (final row in _adherenceHistory) {
+      if (row['date_key']?.toString() != dateKey) continue;
+      final entry = _AdherenceEntry.fromMap(row);
+      entries[entry.id] = entry;
+    }
+
+    for (final reminder in _reminders) {
+      final scheduled = DateTime.fromMillisecondsSinceEpoch(
+        reminder.scheduledTimeMillis,
+      );
+      final occurrenceId = '${reminder.id}.${scheduled.millisecondsSinceEpoch}';
+
+      if (reminder.lastOccurrenceDate == dateKey &&
+          reminder.lastOccurrenceStatus.isNotEmpty) {
+        entries.putIfAbsent(
+          occurrenceId,
+          () => _AdherenceEntry(
+            id: occurrenceId,
+            reminderId: reminder.id,
+            title: reminder.title,
+            scheduledAt: scheduled,
+            status: reminder.lastOccurrenceStatus,
+          ),
+        );
+      }
+
+      if (_isSameDay(scheduled, date) &&
+          !entries.containsKey(occurrenceId) &&
+          !reminder.isCanceled) {
+        entries[occurrenceId] = _AdherenceEntry(
+          id: occurrenceId,
+          reminderId: reminder.id,
+          title: reminder.title,
+          scheduledAt: scheduled,
+          status: _statusForReminderOnDate(reminder, date),
+        );
+      }
+    }
+
+    final sorted = entries.values.toList()
+      ..sort((a, b) => a.scheduledAt.compareTo(b.scheduledAt));
+    return sorted;
+  }
+
+  int _adherenceScoreForRange(DateTime start, DateTime end) {
+    var total = 0;
+    var completed = 0;
+    var cursor = DateTime(start.year, start.month, start.day);
+    final last = DateTime(end.year, end.month, end.day);
+    while (!cursor.isAfter(last)) {
+      final entries = _timelineEntriesForDate(cursor);
+      total += entries.length;
+      completed += entries.where((e) => e.status == 'completed').length;
+      cursor = cursor.add(const Duration(days: 1));
+    }
+    if (total == 0) return 0;
+    return ((completed / total) * 100).round().clamp(0, 100);
+  }
+
+  String _statusForReminderOnDate(ReminderModel reminder, DateTime date) {
+    if (reminder.lastOccurrenceDate == _dateKey(date) &&
+        reminder.lastOccurrenceStatus.isNotEmpty) {
+      return reminder.lastOccurrenceStatus;
+    }
+    if (reminder.isCompleted) return 'completed';
+    if (reminder.isSkipped) return 'skipped';
+    if (reminder.isMissed || _isMissed(reminder)) return 'missed';
+    return 'pending';
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  String _dateKey(DateTime date) {
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '${date.year}-$month-$day';
   }
 
   Widget _buildSummaryItem(
@@ -454,6 +748,187 @@ class _AllRemindersScreenState extends State<AllRemindersScreen>
         itemCount: reminders.length,
       ),
     );
+  }
+}
+
+class _AdherenceEntry {
+  const _AdherenceEntry({
+    required this.id,
+    required this.reminderId,
+    required this.title,
+    required this.scheduledAt,
+    required this.status,
+  });
+
+  final String id;
+  final String reminderId;
+  final String title;
+  final DateTime scheduledAt;
+  final String status;
+
+  factory _AdherenceEntry.fromMap(Map<String, dynamic> map) {
+    final scheduledValue = map['scheduled_at'];
+    final scheduledAt = scheduledValue is int
+        ? DateTime.fromMillisecondsSinceEpoch(scheduledValue)
+        : DateTime.tryParse(map['scheduled_time']?.toString() ?? '') ??
+              DateTime.now();
+    return _AdherenceEntry(
+      id: map['id']?.toString() ?? '',
+      reminderId: map['reminder_id']?.toString() ?? '',
+      title: map['title']?.toString() ?? 'Reminder',
+      scheduledAt: scheduledAt,
+      status: map['status']?.toString() ?? 'pending',
+    );
+  }
+}
+
+class _AdherenceMetric extends StatelessWidget {
+  const _AdherenceMetric({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      margin: const EdgeInsets.only(right: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: GoogleFonts.nunitoSans(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: GoogleFonts.nunitoSans(
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+              color: AppTheme.primaryBlue,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AdherenceTimelineRow extends StatelessWidget {
+  const _AdherenceTimelineRow({
+    required this.entry,
+    required this.timeFormat,
+    required this.isTagalog,
+  });
+
+  final _AdherenceEntry entry;
+  final DateFormat timeFormat;
+  final bool isTagalog;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = _statusColor(entry.status);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 76,
+            child: Text(
+              timeFormat.format(entry.scheduledAt),
+              style: GoogleFonts.nunitoSans(
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
+          ),
+          Container(
+            width: 26,
+            height: 26,
+            decoration: BoxDecoration(
+              color: color.withAlpha(30),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(_statusIcon(entry.status), size: 16, color: color),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  entry.title,
+                  style: GoogleFonts.nunitoSans(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                Text(
+                  _statusLabel(entry.status),
+                  style: GoogleFonts.nunitoSans(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: color,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _statusLabel(String status) {
+    switch (status) {
+      case 'completed':
+        return isTagalog ? 'Tapos Na' : 'Completed';
+      case 'skipped':
+        return isTagalog ? 'Nilaktawan' : 'Skipped';
+      case 'missed':
+        return isTagalog ? 'Nalagpasan' : 'Missed';
+      default:
+        return isTagalog ? 'Nakabinbin' : 'Pending';
+    }
+  }
+
+  IconData _statusIcon(String status) {
+    switch (status) {
+      case 'completed':
+        return Icons.check_rounded;
+      case 'skipped':
+        return Icons.skip_next_rounded;
+      case 'missed':
+        return Icons.close_rounded;
+      default:
+        return Icons.schedule_rounded;
+    }
+  }
+
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'completed':
+        return AppTheme.success;
+      case 'skipped':
+        return AppTheme.primaryBlue;
+      case 'missed':
+        return AppTheme.errorRed;
+      default:
+        return Colors.orange.shade800;
+    }
   }
 }
 

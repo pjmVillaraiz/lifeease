@@ -1148,9 +1148,6 @@ class _HomeScreenState extends State<HomeScreen>
                     child: _buildStatusCards(theme, isTagalog),
                   ),
                   SliverToBoxAdapter(
-                    child: _buildReminderAnalytics(theme, isTagalog),
-                  ),
-                  SliverToBoxAdapter(
                     child: _buildTodayScheduleSummary(theme, isTagalog),
                   ),
                   SliverToBoxAdapter(
@@ -1706,100 +1703,6 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildReminderAnalytics(ThemeData theme, bool isTagalog) {
-    final daily = _insightsService.statsFor(
-      _reminders,
-      period: ReminderStatsPeriod.day,
-    );
-    final weekly = _insightsService.statsFor(
-      _reminders,
-      period: ReminderStatsPeriod.week,
-    );
-    final monthly = _insightsService.statsFor(
-      _reminders,
-      period: ReminderStatsPeriod.month,
-    );
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest.withAlpha(120),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              tr(isTagalog, 'Reminder Statistics', 'Estadistika ng Paalala'),
-              style: GoogleFonts.nunitoSans(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-                color: theme.colorScheme.onSurface,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildStatsColumn(
-                    theme,
-                    tr(isTagalog, 'Today', 'Ngayon'),
-                    daily,
-                  ),
-                ),
-                Expanded(
-                  child: _buildStatsColumn(
-                    theme,
-                    tr(isTagalog, 'Week', 'Linggo'),
-                    weekly,
-                  ),
-                ),
-                Expanded(
-                  child: _buildStatsColumn(
-                    theme,
-                    tr(isTagalog, 'Month', 'Buwan'),
-                    monthly,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatsColumn(ThemeData theme, String label, ReminderStats stats) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: GoogleFonts.nunitoSans(
-            fontSize: 13,
-            fontWeight: FontWeight.w800,
-            color: theme.colorScheme.primary,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'Total ${stats.total}',
-          style: GoogleFonts.nunitoSans(fontSize: 12),
-        ),
-        Text(
-          '${stats.completionRate}% done',
-          style: GoogleFonts.nunitoSans(fontSize: 12),
-        ),
-        Text(
-          '${stats.medicationAdherence}% meds',
-          style: GoogleFonts.nunitoSans(fontSize: 12),
-        ),
-      ],
     );
   }
 

@@ -76,8 +76,8 @@ class ReminderNotificationService {
   static const String _firedOccurrencePrefix =
       'lifeease.reminder.fired_occurrence.';
   static const Duration _lateReminderGrace = Duration(minutes: 5);
-  static const Duration _ignoredRetryDelay = Duration(minutes: 1);
-  static const int _maxIgnoredRetries = 3;
+  static const Duration _ignoredRetryDelay = Duration(seconds: 30);
+  static const int _maxIgnoredAttempts = 5;
 
   Future<void> initialize({bool requestPermissions = true}) async {
     if (_initialized) {
@@ -111,8 +111,10 @@ class ReminderNotificationService {
     }
 
     await _createNotificationChannel();
+    await _drainNativeReminderActions();
     if (requestPermissions) {
       await _requestPermissions();
+      await _requestReminderReliabilityAccess();
     }
     _initialized = true;
   }
@@ -324,6 +326,50 @@ class ReminderNotificationService {
             IOSFlutterLocalNotificationsPlugin
           >()
           ?.requestPermissions(alert: true, badge: true, sound: true);
+    }
+  }
+
+  Future<void> _requestReminderReliabilityAccess() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+
+    try {
+      await _nativeReminderChannel.invokeMethod<void>(
+        'requestReminderReliabilityAccess',
+      );
+    } catch (error) {
+      debugPrint('Reminder reliability access request skipped: $error');
+    }
+  }
+
+  Future<void> _drainNativeReminderActions() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+
+    try {
+      final actions = await _nativeReminderChannel.invokeListMethod<dynamic>(
+        'drainNativeReminderActions',
+      );
+      if (actions == null || actions.isEmpty) return;
+
+      for (final action in actions) {
+        if (action is! Map) continue;
+        final actionId = action['actionId']?.toString();
+        final alarmId = action['alarmId'] is int
+            ? action['alarmId'] as int
+            : int.tryParse(action['alarmId']?.toString() ?? '');
+        final reminderId = action['reminderId']?.toString() ?? '';
+        if (alarmId == null || reminderId.isEmpty) continue;
+        if (actionId != _doneActionId && actionId != _skipActionId) continue;
+
+        await _applyNotificationAction(
+          actionId: actionId,
+          payload: _NotificationPayload(
+            alarmId: alarmId,
+            reminderId: reminderId,
+          ),
+        );
+      }
+    } catch (error) {
+      debugPrint('Native reminder action drain skipped: $error');
     }
   }
 
@@ -691,7 +737,7 @@ class ReminderNotificationService {
         ? reminder['retryCount'] as int
         : int.tryParse(reminder['retryCount']?.toString() ?? '') ?? 0;
     final nextReminder = Map<String, dynamic>.from(reminder);
-    if (retryCount < _maxIgnoredRetries) {
+    if (retryCount < _maxIgnoredAttempts - 1) {
       nextReminder
         ..['retryCount'] = retryCount + 1
         ..['markMissedOnFire'] = false;
@@ -1133,6 +1179,9 @@ class ReminderNotificationService {
       await _nativeReminderChannel.invokeMethod<void>('scheduleSpeechAlarm', {
         'alarmId': alarmId,
         'triggerAtMillis': notificationTime.millisecondsSinceEpoch,
+        'reminderId': reminder['id']?.toString() ?? '',
+        'title': TtsLanguageService.notificationTitle(),
+        'body': _bodyFor(reminder, notificationTime),
         'text': _spokenTextFor(reminder),
         'languageCode': TtsLanguageService.currentLanguage.code,
       });

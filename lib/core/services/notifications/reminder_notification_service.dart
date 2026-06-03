@@ -79,6 +79,7 @@ class ReminderNotificationService {
   static const String _lastTimeZoneKey = 'lifeease.reminder.last_timezone';
   static const String _firedOccurrencePrefix =
       'lifeease.reminder.fired_occurrence.';
+  static const String _pendingDuePrefix = 'lifeease.reminder.pending_due.';
   static const Duration _lateReminderGrace = Duration(minutes: 5);
   static const Duration _ignoredRetryDelay = Duration(seconds: 30);
   static const int _maxIgnoredAttempts = 5;
@@ -632,6 +633,7 @@ class ReminderNotificationService {
 
     if (response.actionId != _skipActionId &&
         response.actionId != _doneActionId) {
+      await queueDueReminderFromNotificationTap(response);
       return;
     }
 
@@ -832,14 +834,111 @@ class ReminderNotificationService {
     Map<String, dynamic> reminder,
     DateTime scheduledAt,
   ) {
+    final event = ReminderDueEvent(
+      alarmId: alarmId,
+      reminder: Map<String, dynamic>.from(reminder),
+      scheduledAt: scheduledAt,
+    );
+    unawaited(_persistPendingDueReminder(event));
     if (_dueReminderController.isClosed) return;
-    _dueReminderController.add(
+    _dueReminderController.add(event);
+  }
+
+  Future<void> _persistPendingDueReminder(ReminderDueEvent event) async {
+    final reminderId = event.reminder['id']?.toString();
+    if (reminderId == null || reminderId.isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final storageKey =
+        '$_pendingDuePrefix$reminderId.${event.scheduledAt.millisecondsSinceEpoch}';
+    await prefs.setString(
+      storageKey,
+      jsonEncode({
+        'alarmId': event.alarmId,
+        'reminder': event.reminder,
+        'scheduledAtMillis': event.scheduledAt.millisecondsSinceEpoch,
+      }),
+    );
+  }
+
+  Future<List<ReminderDueEvent>> drainPendingDueReminders() async {
+    final prefs = await SharedPreferences.getInstance();
+    final storageKeys = prefs
+        .getKeys()
+        .where((key) => key.startsWith(_pendingDuePrefix))
+        .toList();
+    final events = <ReminderDueEvent>[];
+
+    for (final storageKey in storageKeys) {
+      final raw = prefs.getString(storageKey);
+      await prefs.remove(storageKey);
+      if (raw == null || raw.isEmpty) continue;
+
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map) continue;
+
+        final alarmId = decoded['alarmId'];
+        final parsedAlarmId = alarmId is int
+            ? alarmId
+            : int.tryParse(alarmId?.toString() ?? '');
+        final scheduledAtMillis = decoded['scheduledAtMillis'];
+        final parsedScheduledAt = scheduledAtMillis is int
+            ? scheduledAtMillis
+            : int.tryParse(scheduledAtMillis?.toString() ?? '');
+        final reminder = decoded['reminder'];
+        if (parsedAlarmId == null ||
+            parsedScheduledAt == null ||
+            reminder is! Map) {
+          continue;
+        }
+
+        events.add(
+          ReminderDueEvent(
+            alarmId: parsedAlarmId,
+            reminder: Map<String, dynamic>.from(reminder),
+            scheduledAt: DateTime.fromMillisecondsSinceEpoch(
+              parsedScheduledAt,
+            ),
+          ),
+        );
+      } catch (error) {
+        debugPrint('Pending due reminder parse failed: $error');
+      }
+    }
+
+    return events;
+  }
+
+  Future<void> queueDueReminderFromNotificationTap(
+    NotificationResponse response,
+  ) async {
+    final payload = _payloadFrom(response.payload);
+    if (payload == null || payload.reminderId.isEmpty) return;
+
+    final reminder = await ReminderRepository().loadReminderById(
+      payload.reminderId,
+    );
+    if (reminder == null) return;
+
+    final scheduledAt = _dateTimeFromValue(
+      reminder['reminder_time'] ?? reminder['scheduledTimeMillis'],
+    );
+    if (scheduledAt == null) return;
+
+    await _persistPendingDueReminder(
       ReminderDueEvent(
-        alarmId: alarmId,
-        reminder: Map<String, dynamic>.from(reminder),
+        alarmId: payload.alarmId,
+        reminder: reminder,
         scheduledAt: scheduledAt,
       ),
     );
+  }
+
+  Future<NotificationAppLaunchDetails?>
+  getNotificationLaunchDetails() async {
+    await initialize(requestPermissions: false);
+    return _plugin.getNotificationAppLaunchDetails();
   }
 
   Future<void> _enqueueSpeech(Future<void> Function() action) {

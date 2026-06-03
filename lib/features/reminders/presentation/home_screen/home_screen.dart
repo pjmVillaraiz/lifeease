@@ -16,229 +16,20 @@ import 'package:lifeease/core/services/backend/supabase_auth_service.dart';
 import 'package:lifeease/core/services/backend/user_profile_service.dart';
 import 'package:lifeease/core/services/emergency/emergency_route_processing_module.dart';
 import 'package:lifeease/core/services/notifications/reminder_notification_service.dart';
-import 'package:lifeease/core/services/tts/tts_language_service.dart';
+import 'package:lifeease/features/reminders/application/due_reminder_prompt_coordinator.dart';
 import 'package:lifeease/features/reminders/application/location_reminder_service.dart';
 import 'package:lifeease/features/reminders/application/reminder_insights_service.dart';
+import 'package:lifeease/features/reminders/models/reminder_model.dart';
 import 'package:lifeease/features/reminders/presentation/add_reminder_screen/add_reminder_screen.dart';
 import 'package:lifeease/features/sus_evaluation/application/sus_processing_module.dart';
 import 'package:lifeease/features/translation/application/language_translation_processing_module.dart';
 import 'package:lifeease/features/voice/application/speech_processing_module.dart';
 import 'package:lifeease/features/voice/application/voice_assistant_service.dart';
 import 'package:lifeease/services/voice/command_processor.dart';
+import 'package:lifeease/services/voice/voice_reminder_hints.dart';
+import 'package:lifeease/services/voice/voice_time_parser.dart';
 
 import './widgets/reminder_card_widget.dart';
-
-class ReminderModel {
-  final String id;
-  final String title;
-  final String description;
-  final int scheduledTimeMillis;
-  final bool isCompleted;
-  final bool isCanceled;
-  final bool isSkipped;
-  final bool isMissed;
-  final bool isRepeating;
-  final int repeatIntervalMinutes;
-  final String category;
-  final String userUid;
-  final int createdAt;
-  final bool isSynced;
-  final String lastOccurrenceStatus;
-  final String lastOccurrenceDate;
-  final bool locationEnabled;
-  final String locationTrigger;
-  final String locationName;
-  final double? locationLatitude;
-  final double? locationLongitude;
-
-  const ReminderModel({
-    required this.id,
-    required this.title,
-    required this.description,
-    required this.scheduledTimeMillis,
-    required this.isCompleted,
-    required this.isCanceled,
-    required this.isSkipped,
-    required this.isMissed,
-    required this.isRepeating,
-    required this.repeatIntervalMinutes,
-    required this.category,
-    required this.userUid,
-    required this.createdAt,
-    required this.isSynced,
-    this.lastOccurrenceStatus = '',
-    this.lastOccurrenceDate = '',
-    this.locationEnabled = false,
-    this.locationTrigger = 'arrive',
-    this.locationName = '',
-    this.locationLatitude,
-    this.locationLongitude,
-  });
-
-  factory ReminderModel.fromMap(Map<String, dynamic> map) {
-    final scheduledAt = map['scheduledTimeMillis'] ?? map['reminder_time'];
-    final createdValue = map['createdAt'] ?? map['created_at'];
-    final repeatType = map['repeat_type']?.toString() ?? '';
-    final isRepeatingValue =
-        map['isRepeating'] as bool? ??
-        (repeatType.isNotEmpty && repeatType != 'none');
-    final taskStatus = map['task_status']?.toString();
-    final lastOccurrenceStatus = map['last_occurrence_status']?.toString();
-
-    return ReminderModel(
-      id: map['id']?.toString() ?? DateTime.now().toIso8601String(),
-      title: map['title']?.toString() ?? TtsLanguageService.reminderLabel(),
-      description: map['description']?.toString() ?? '',
-      scheduledTimeMillis: _millisFromValue(scheduledAt),
-      isCompleted:
-          map['isCompleted'] as bool? ?? map['is_completed'] as bool? ?? false,
-      isCanceled:
-          map['isCanceled'] as bool? ??
-          map['is_canceled'] as bool? ??
-          (map['sync_status'] == 'canceled' ||
-              map['sync_status'] == 'cancelled' ||
-              map['task_status'] == 'cancelled'),
-      isSkipped:
-          !isRepeatingValue &&
-          (map['isSkipped'] as bool? ??
-              (taskStatus == 'skipped' || lastOccurrenceStatus == 'skipped')),
-      isMissed:
-          !isRepeatingValue &&
-          (map['isMissed'] as bool? ??
-              (taskStatus == 'missed' || lastOccurrenceStatus == 'missed')),
-      isRepeating: isRepeatingValue,
-      repeatIntervalMinutes:
-          map['repeatIntervalMinutes'] as int? ??
-          _repeatMinutesFromType(map['repeat_type']?.toString()),
-      category: map['category'] as String? ?? 'general',
-      userUid: map['userUid'] as String? ?? '',
-      createdAt: _millisFromValue(createdValue),
-      isSynced: map['isSynced'] as bool? ?? map['sync_status'] == 'synced',
-      lastOccurrenceStatus: lastOccurrenceStatus ?? '',
-      lastOccurrenceDate: map['last_occurrence_date']?.toString() ?? '',
-      locationEnabled: map['location_enabled'] == true,
-      locationTrigger: map['location_trigger']?.toString() == 'leave'
-          ? 'leave'
-          : 'arrive',
-      locationName: map['location_name']?.toString() ?? '',
-      locationLatitude: _doubleFromValue(map['location_latitude']),
-      locationLongitude: _doubleFromValue(map['location_longitude']),
-    );
-  }
-
-  bool get isCompletedToday {
-    return lastOccurrenceStatus == 'completed' &&
-        lastOccurrenceDate == _dateKey(DateTime.now());
-  }
-
-  bool get isCanceledToday {
-    return (lastOccurrenceStatus == 'cancelled' ||
-            lastOccurrenceStatus == 'canceled') &&
-        lastOccurrenceDate == _dateKey(DateTime.now());
-  }
-
-  bool get isSkippedToday {
-    if (isSkipped && !isRepeating) return true;
-    return (isSkipped || lastOccurrenceStatus == 'skipped') &&
-        lastOccurrenceDate == _dateKey(DateTime.now());
-  }
-
-  bool get isMissedToday {
-    if (isMissed && !isRepeating) return true;
-    return (isMissed || lastOccurrenceStatus == 'missed') &&
-        lastOccurrenceDate == _dateKey(DateTime.now());
-  }
-
-  Map<String, dynamic> toMap() => {
-    'id': id,
-    'title': title,
-    'description': description,
-    'scheduledTimeMillis': scheduledTimeMillis,
-    'reminder_time': DateTime.fromMillisecondsSinceEpoch(
-      scheduledTimeMillis,
-    ).toIso8601String(),
-    'isCompleted': isCompleted,
-    'isCanceled': isCanceled,
-    'is_canceled': isCanceled,
-    'isSkipped': isSkipped,
-    'isMissed': isMissed,
-    'task_status': isCanceled
-        ? 'cancelled'
-        : isSkipped
-        ? 'skipped'
-        : isMissed
-        ? 'missed'
-        : 'active',
-    'isRepeating': isRepeating,
-    'repeatIntervalMinutes': repeatIntervalMinutes,
-    'repeat_type': isRepeating
-        ? _repeatTypeFromMinutes(repeatIntervalMinutes)
-        : 'none',
-    'category': category,
-    'userUid': userUid,
-    'createdAt': createdAt,
-    'isSynced': isSynced,
-    'last_occurrence_status': lastOccurrenceStatus,
-    'last_occurrence_date': lastOccurrenceDate,
-    'location_enabled': locationEnabled,
-    'location_trigger': locationTrigger,
-    'location_name': locationName,
-    'location_latitude': locationLatitude,
-    'location_longitude': locationLongitude,
-  };
-
-  static int _millisFromValue(Object? value) {
-    if (value is int) return value;
-    if (value is DateTime) return value.millisecondsSinceEpoch;
-    if (value is String) {
-      return DateTime.tryParse(value)?.millisecondsSinceEpoch ??
-          int.tryParse(value) ??
-          DateTime.now().millisecondsSinceEpoch;
-    }
-    return DateTime.now().millisecondsSinceEpoch;
-  }
-
-  static double? _doubleFromValue(Object? value) {
-    if (value is num) return value.toDouble();
-    return double.tryParse(value?.toString() ?? '');
-  }
-
-  static int _repeatMinutesFromType(String? repeatType) {
-    final customMatch = RegExp(
-      r'^custom:(\d+)$',
-    ).firstMatch(repeatType?.toLowerCase() ?? '');
-    if (customMatch != null) {
-      return int.tryParse(customMatch.group(1)!) ?? 0;
-    }
-
-    switch (repeatType) {
-      case 'daily':
-        return 1440;
-      case 'twice_monthly':
-        return 21600;
-      case 'weekly':
-        return 10080;
-      case 'monthly':
-        return 43200;
-      default:
-        return 0;
-    }
-  }
-
-  static String _repeatTypeFromMinutes(int minutes) {
-    if (minutes == 43200) return 'monthly';
-    if (minutes == 21600) return 'twice_monthly';
-    if (minutes == 10080) return 'weekly';
-    if (minutes == 1440) return 'daily';
-    return 'custom:$minutes';
-  }
-
-  static String _dateKey(DateTime date) {
-    final month = date.month.toString().padLeft(2, '0');
-    final day = date.day.toString().padLeft(2, '0');
-    return '${date.year}-$month-$day';
-  }
-}
 
 class _GuidedFrequency {
   const _GuidedFrequency(
@@ -272,7 +63,9 @@ class _HomeScreenState extends State<HomeScreen>
   bool _voiceListenCancelled = false;
   String _liveTranscript = '';
   String _voiceStatus = '';
-  VoiceReminderDraft? _lastVoiceReminderDraft;
+  bool _voiceUsedGemma = false;
+  String? _voiceParserLabel;
+  String? _voiceParserDetail;
   String? _firstName;
 
   late final ReminderRepository _reminderRepository;
@@ -286,17 +79,13 @@ class _HomeScreenState extends State<HomeScreen>
   late final EmergencyRouteProcessingModule _emergencyRouteProcessor;
   late final SusProcessingModule _susProcessor;
   late final StreamSubscription<void> _reminderChanges;
-  late final StreamSubscription<ReminderDueEvent> _dueReminderEvents;
   StreamSubscription<double>? _voiceAmplitudeSubscription;
   Timer? _statusRefreshTimer;
   Timer? _noVoiceDetectedTimer;
   Timer? _voiceAutoStopTimer;
   bool _voiceDetectedDuringRecording = false;
-  bool _isShowingDueReminderPrompt = false;
   bool _isReconcilingDueReminders = false;
   bool _hasScheduledLoadedReminders = false;
-  final Set<String> _shownDueReminderKeys = <String>{};
-
   late AnimationController _listEntranceController;
 
   static const List<EmergencyContact> _emergencyContacts = [
@@ -334,8 +123,6 @@ class _HomeScreenState extends State<HomeScreen>
     _reminderChanges = ReminderRepository.changes.listen((_) {
       _loadReminders(showLoading: false);
     });
-    _dueReminderEvents = ReminderNotificationService.instance.dueReminders
-        .listen(_onDueReminderEvent);
     _statusRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (!mounted) return;
       setState(() {});
@@ -350,7 +137,6 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _reminderChanges.cancel();
-    _dueReminderEvents.cancel();
     _stopVoiceRecordingWatchdog();
     _statusRefreshTimer?.cancel();
     unawaited(_speechModule.cancelListening());
@@ -370,14 +156,9 @@ class _HomeScreenState extends State<HomeScreen>
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.hidden) {
       unawaited(_speechModule.cancelListening());
-      if (mounted && (_isListening || _isProcessingVoice)) {
-        setState(() {
-          _isListening = false;
-          _isProcessingVoice = false;
-          _voiceListenCancelled = true;
-          _liveTranscript = '';
-          _voiceStatus = '';
-        });
+      if (mounted && (_isListening || _isProcessingVoice || _isGuidedListening)) {
+        _voiceListenCancelled = true;
+        _resetVoiceIdleState();
       }
     }
   }
@@ -426,7 +207,11 @@ class _HomeScreenState extends State<HomeScreen>
     });
 
     _listEntranceController.forward(from: 0.0);
-    _showRecentlyDueReminderPrompts(loaded);
+    unawaited(
+      DueReminderPromptCoordinator.instance.showRecentlyDueReminderPrompts(
+        loaded,
+      ),
+    );
   }
 
   Future<void> _reconcileDueReminders() async {
@@ -470,248 +255,6 @@ class _HomeScreenState extends State<HomeScreen>
     HapticFeedback.mediumImpact();
   }
 
-  Future<void> _cancelReminder(ReminderModel reminder) async {
-    await _reminderRepository.markReminderCanceled(reminder.toMap());
-    await ReminderNotificationService.instance.cancelReminder(reminder.id);
-    if (!mounted) return;
-    setState(() => _reminders.removeWhere((r) => r.id == reminder.id));
-    HapticFeedback.mediumImpact();
-  }
-
-  void _onDueReminderEvent(ReminderDueEvent event) {
-    if (!mounted) return;
-    final reminderId = event.reminder['id']?.toString();
-    if (reminderId == null || reminderId.isEmpty) return;
-
-    final key = '$reminderId.${event.scheduledAt.millisecondsSinceEpoch}';
-    if (!_shownDueReminderKeys.add(key)) return;
-
-    final reminder = ReminderModel.fromMap({
-      ...event.reminder,
-      'reminder_time': event.scheduledAt.toIso8601String(),
-      'scheduledTimeMillis': event.scheduledAt.millisecondsSinceEpoch,
-    });
-    unawaited(_showDueReminderPrompt(reminder));
-  }
-
-  String _getCategoryLabel(String category, bool isTagalog) {
-    switch (category.toLowerCase()) {
-      case 'health':
-        return isTagalog ? 'Kalusugan' : 'Health';
-      case 'medical':
-        return isTagalog ? 'Medikal' : 'Medical';
-      case 'work':
-        return isTagalog ? 'Trabaho' : 'Work';
-      case 'personal':
-        return isTagalog ? 'Personal' : 'Personal';
-      case 'family':
-        return isTagalog ? 'Pamilya' : 'Family';
-      case 'appointment':
-        return isTagalog ? 'Appointment' : 'Appointment';
-      case 'meeting':
-        return isTagalog ? 'Meeting' : 'Meeting';
-      case 'shopping':
-        return isTagalog ? 'Pamimili' : 'Shopping';
-      case 'exercise':
-        return isTagalog ? 'Ehersisyo' : 'Exercise';
-      case 'medication':
-        return isTagalog ? 'Gamot' : 'Medication';
-      default:
-        return isTagalog ? 'Pangkalahatan' : 'General';
-    }
-  }
-
-  Future<void> _showDueReminderPrompt(ReminderModel reminder) async {
-    if (!mounted || _isShowingDueReminderPrompt) return;
-    _isShowingDueReminderPrompt = true;
-    final isTagalog = LanguageController.isTagalog.value;
-    try {
-      // Announce the reminder via voice
-      final scheduled = DateTime.fromMillisecondsSinceEpoch(
-        reminder.scheduledTimeMillis,
-      );
-      final timeStr = DateFormat('h:mm a').format(scheduled);
-      final categoryLabel = _getCategoryLabel(reminder.category, isTagalog);
-      
-      final announcement = tr(
-        isTagalog,
-        'Reminder due. Category: ${categoryLabel}. ${reminder.title}. ${reminder.description.isNotEmpty ? reminder.description : 'No additional details'}. Time: $timeStr.',
-        'Paalala na. Kategorya: ${categoryLabel}. ${reminder.title}. ${reminder.description.isNotEmpty ? reminder.description : 'Walang karagdagang detalye'}. Oras: $timeStr.',
-      );
-      unawaited(_speechModule.speak(announcement));
-      
-      final action = await showDialog<String>(
-        context: context,
-        barrierDismissible: false,
-        barrierColor: Colors.black54,
-        builder: (ctx) {
-          final theme = Theme.of(ctx);
-          return AlertDialog(
-            insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(24),
-            ),
-            icon: Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primaryContainer,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.notifications_active,
-                color: theme.colorScheme.primary,
-                size: 28,
-              ),
-            ),
-            title: Text(
-              tr(isTagalog, 'Reminder Due', 'Oras Na Ng Paalala'),
-              textAlign: TextAlign.center,
-              style: GoogleFonts.nunitoSans(
-                fontSize: 20,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.secondaryContainer,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    categoryLabel,
-                    textAlign: TextAlign.center,
-                    style: GoogleFonts.nunitoSans(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: theme.colorScheme.onSecondaryContainer,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  reminder.title,
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.nunitoSans(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                if (reminder.description.trim().isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    reminder.description,
-                    textAlign: TextAlign.center,
-                    style: GoogleFonts.nunitoSans(
-                      fontSize: 15,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
-                  ),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.schedule,
-                        size: 20,
-                        color: theme.colorScheme.primary,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        timeStr,
-                        style: GoogleFonts.nunitoSans(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            actionsAlignment: MainAxisAlignment.spaceBetween,
-            actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-            actions: [
-              OutlinedButton.icon(
-                onPressed: () => Navigator.pop(ctx, 'cancel'),
-                icon: const Icon(Icons.close),
-                label: Text(
-                  tr(isTagalog, 'Cancel', 'Kanselahin'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              FilledButton.icon(
-                onPressed: () => Navigator.pop(ctx, 'done'),
-                icon: const Icon(Icons.check),
-                label: Text(
-                  tr(isTagalog, 'Complete', 'Tapos'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          );
-        },
-      );
-
-      if (!mounted) return;
-      if (action == 'done') {
-        await _markComplete(reminder);
-      } else if (action == 'cancel') {
-        await _cancelReminder(reminder);
-      }
-      await _loadReminders(showLoading: false);
-    } finally {
-      _isShowingDueReminderPrompt = false;
-    }
-  }
-
-  void _showRecentlyDueReminderPrompts(List<ReminderModel> reminders) {
-    if (!mounted || _isShowingDueReminderPrompt) return;
-    final now = DateTime.now();
-    for (final reminder in reminders) {
-      if (reminder.isCompleted ||
-          reminder.isCompletedToday ||
-          reminder.isCanceled ||
-          reminder.isCanceledToday ||
-          reminder.isSkippedToday ||
-          reminder.isMissedToday) {
-        continue;
-      }
-
-      final scheduled = DateTime.fromMillisecondsSinceEpoch(
-        reminder.scheduledTimeMillis,
-      );
-      if (scheduled.isAfter(now)) continue;
-      if (now.difference(scheduled) > const Duration(minutes: 5)) continue;
-
-      final key = '${reminder.id}.${scheduled.millisecondsSinceEpoch}';
-      if (!_shownDueReminderKeys.add(key)) continue;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) unawaited(_showDueReminderPrompt(reminder));
-      });
-      return;
-    }
-  }
-
   Future<void> _editReminder(ReminderModel reminder) async {
     final updated = await Navigator.push<bool>(
       context,
@@ -725,13 +268,86 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  Future<void> _onSpeakCommand() async {
+  Future<void> _onVoiceButtonTap() async {
+    if (_isGuidedListening || (_isProcessingVoice && !_isListening)) {
+      await _abortActiveVoiceSession();
+    }
+
     if (_isListening) {
+      await _stopVoiceRecordingAndTranscribe();
       return;
     }
+
+    if (_isProcessingVoice) {
+      await _abortActiveVoiceSession();
+    }
+
+    await _onSpeakCommand();
+  }
+
+  Future<void> _abortActiveVoiceSession() async {
+    _voiceListenCancelled = true;
+    _stopVoiceRecordingWatchdog();
+    await _speechModule.cancelListening();
+    _resetVoiceIdleState();
+  }
+
+  void _resetVoiceIdleState() {
+    if (!mounted) return;
+    setState(() {
+      _liveTranscript = '';
+      _isListening = false;
+      _isProcessingVoice = false;
+      _isGuidedListening = false;
+      _voiceStatus = '';
+      _voiceListenCancelled = false;
+    });
+  }
+
+  void _clearVoiceParserResult() {
+    if (!mounted) return;
+    setState(() {
+      _voiceUsedGemma = false;
+      _voiceParserLabel = null;
+      _voiceParserDetail = null;
+    });
+  }
+
+  void _applyVoiceParserResult(VoiceCommandResult result) {
+    if (!mounted) return;
+    final isTagalog = LanguageController.isTagalog.value;
+    setState(() {
+      _voiceUsedGemma = result.usedGemma;
+      _voiceParserLabel = result.parserBadgeLabel(isTagalog: isTagalog);
+      _voiceParserDetail =
+          result.usedGemma &&
+              result.nlpSummary?.trim().isNotEmpty == true
+          ? result.nlpSummary!.trim()
+          : result.parserDetailLabel(isTagalog: isTagalog);
+    });
+  }
+
+  Future<void> _showUnrecognizedCommandHelp() async {
+    final isTagalog = LanguageController.isTagalog.value;
+    final message = tr(
+      isTagalog,
+      'I did not understand that. Tap the microphone to try a voice reminder, or tap + Add Reminder to create one manually.',
+      'Hindi ko naintindihan iyon. I-tap ang microphone para subukan ang voice reminder, o i-tap ang + Magdagdag ng Paalala para gumawa nang manual.',
+    );
+    _resetVoiceIdleState();
+    _showSnack(message);
+    try {
+      await _speechModule.speak(message);
+    } catch (_) {
+      // Snackbar is enough when TTS is unavailable.
+    }
+  }
+
+  Future<void> _onSpeakCommand() async {
     if (_isProcessingVoice) return;
 
     HapticFeedback.heavyImpact();
+    _clearVoiceParserResult();
     final isTagalog = LanguageController.isTagalog.value;
     setState(() {
       _isListening = false;
@@ -739,13 +355,22 @@ class _HomeScreenState extends State<HomeScreen>
       _voiceListenCancelled = false;
       _liveTranscript = '';
       _voiceStatus = tr(isTagalog, "I'm listening.", 'Nakikinig ako.');
-      _lastVoiceReminderDraft = null;
     });
     try {
       await _speechModule.speak(
         tr(isTagalog, "I'm listening.", 'Nakikinig ako.'),
       );
-      if (!mounted) return;
+      if (!mounted || _voiceListenCancelled) {
+        if (mounted) {
+          setState(() {
+            _isListening = false;
+            _isProcessingVoice = false;
+            _voiceListenCancelled = false;
+            _voiceStatus = '';
+          });
+        }
+        return;
+      }
       setState(() {
         _isListening = true;
         _isProcessingVoice = false;
@@ -755,12 +380,7 @@ class _HomeScreenState extends State<HomeScreen>
       _startVoiceRecordingWatchdog();
     } catch (error) {
       if (!mounted) return;
-      setState(() {
-        _isListening = false;
-        _isProcessingVoice = false;
-        _voiceListenCancelled = false;
-        _voiceStatus = '';
-      });
+      _resetVoiceIdleState();
       await _reportVoiceError(error);
     }
   }
@@ -807,19 +427,18 @@ class _HomeScreenState extends State<HomeScreen>
         _voiceStatus = '';
         _liveTranscript = transcript ?? '';
       });
-      if (_enableVoiceCommandParsing &&
+      if (!_voiceListenCancelled &&
+          _enableVoiceCommandParsing &&
           transcript != null &&
           transcript.trim().isNotEmpty) {
         await _handleCommandText(transcript);
       }
+      if (_voiceListenCancelled && mounted) {
+        setState(() => _voiceListenCancelled = false);
+      }
     } catch (error) {
       if (!mounted) return;
-      setState(() {
-        _isListening = false;
-        _isProcessingVoice = false;
-        _voiceListenCancelled = false;
-        _voiceStatus = '';
-      });
+      _resetVoiceIdleState();
       await _reportVoiceError(error);
     }
   }
@@ -863,20 +482,14 @@ class _HomeScreenState extends State<HomeScreen>
     _stopVoiceRecordingWatchdog();
     await _speechModule.cancelListening();
     if (!mounted) return;
-    setState(() {
-      _isListening = false;
-      _isProcessingVoice = false;
-      _voiceStatus = '';
-      _liveTranscript = '';
-    });
+    _resetVoiceIdleState();
     await _respondFromAssistant(
       tr(
         LanguageController.isTagalog.value,
-        'I did not hear anything. Please tap the microphone and try again.',
-        'Wala akong narinig. I-tap muli ang microphone at subukan ulit.',
+        'I did not hear anything. Tap the microphone to try again, or tap + Add Reminder.',
+        'Wala akong narinig. I-tap muli ang microphone, o i-tap ang + Magdagdag ng Paalala.',
       ),
     );
-    _voiceListenCancelled = false;
   }
 
   Future<void> _handleCommandText(String input) async {
@@ -893,6 +506,8 @@ class _HomeScreenState extends State<HomeScreen>
     }
     if (!mounted) return;
 
+    _applyVoiceParserResult(result);
+
     switch (result.intent) {
       case VoiceCommandIntent.createReminder:
         final draft = result.reminderDraft;
@@ -901,7 +516,6 @@ class _HomeScreenState extends State<HomeScreen>
           await _askForMissingReminderTime(result.originalText);
           return;
         }
-        _lastVoiceReminderDraft = draft;
         await _confirmVoiceReminder(draft);
         return;
       case VoiceCommandIntent.reminderList:
@@ -914,23 +528,29 @@ class _HomeScreenState extends State<HomeScreen>
         await _answerReminderQuery(
           result.reminderQueryType ?? ReminderQueryType.pendingCount,
         );
+        _resetVoiceIdleState();
         return;
       case VoiceCommandIntent.dailySchedule:
         await _readTodaySchedule();
+        _resetVoiceIdleState();
         return;
       case VoiceCommandIntent.emergency:
         await _openEmergencyAction();
+        _resetVoiceIdleState();
         return;
       case VoiceCommandIntent.navigation:
         _navigateFromVoice(result.navigationTarget);
+        _resetVoiceIdleState();
         return;
       case VoiceCommandIntent.statistics:
         await _showStatisticsSummary();
+        _resetVoiceIdleState();
         return;
       case VoiceCommandIntent.internet:
         await _respondFromAssistant(
           await _assistantService.answerOnline(input),
         );
+        _resetVoiceIdleState();
         return;
       case VoiceCommandIntent.unknown:
         break;
@@ -941,13 +561,7 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
 
-    _showSnack(
-      tr(
-        LanguageController.isTagalog.value,
-        'Command not recognized. Try "add reminder to take medicine at 8 AM".',
-        'Hindi nakilala ang utos. Subukan: "magdagdag ng paalala uminom ng gamot 8 AM".',
-      ),
-    );
+    await _showUnrecognizedCommandHelp();
   }
 
   Future<void> _askForMissingReminderTime(String input) async {
@@ -960,7 +574,10 @@ class _HomeScreenState extends State<HomeScreen>
           'Anong oras kita paaalalahanan?',
         ),
       );
-      if (_voiceListenCancelled) return;
+      if (_voiceListenCancelled) {
+        _resetVoiceIdleState();
+        return;
+      }
       if (answer == null || answer.trim().isEmpty) continue;
 
       // Try to extract time directly from answer first
@@ -989,7 +606,6 @@ class _HomeScreenState extends State<HomeScreen>
         if (completed.intent == VoiceCommandIntent.createReminder &&
             draft != null &&
             completed.reminderHasExplicitTime) {
-          _lastVoiceReminderDraft = draft;
           await _confirmVoiceReminder(draft);
           return;
         }
@@ -1003,7 +619,6 @@ class _HomeScreenState extends State<HomeScreen>
       if (completed.intent == VoiceCommandIntent.createReminder &&
           draft != null &&
           completed.reminderHasExplicitTime) {
-        _lastVoiceReminderDraft = draft;
         await _confirmVoiceReminder(draft);
         return;
       }
@@ -1041,6 +656,18 @@ class _HomeScreenState extends State<HomeScreen>
           'appointment',
           'checkup',
           'check-up',
+          'food',
+          'lunch',
+          'dinner',
+          'breakfast',
+          'brunch',
+          'snack',
+          'meal',
+          'meals',
+          'grocery',
+          'groceries',
+          'hospital',
+          'dentist',
         ]);
   }
 
@@ -1109,9 +736,7 @@ class _HomeScreenState extends State<HomeScreen>
         _loadReminders();
       });
     } else if (index == 2) {
-      if (!_isListening && !_isProcessingVoice) {
-        _onSpeakCommand();
-      }
+      unawaited(_onVoiceButtonTap());
       setState(() => _currentNavIndex = 0);
     } else if (index == 3) {
       _showTranslationDialog('');
@@ -1209,10 +834,11 @@ class _HomeScreenState extends State<HomeScreen>
       await _respondFromAssistant(
         tr(
           isTagalog,
-          'I could not understand the time. Please try again.',
-          'Hindi ko naintindihan ang oras. Subukan muli.',
+          'I could not understand the time. Tap the microphone to try again, or tap + Add Reminder.',
+          'Hindi ko naintindihan ang oras. I-tap muli ang microphone, o i-tap ang + Magdagdag ng Paalala.',
         ),
       );
+      _resetVoiceIdleState();
       return;
     }
 
@@ -1362,7 +988,7 @@ class _HomeScreenState extends State<HomeScreen>
     setState(() {
       _isGuidedListening = false;
       _isListening = false;
-      _isProcessingVoice = true;
+      _isProcessingVoice = false;
       _voiceStatus = '';
       _liveTranscript = cleanAnswer ?? _liveTranscript;
     });
@@ -1410,127 +1036,24 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _guidedReminderFailed() async {
     if (_voiceListenCancelled) return;
-    
-    // Reset all voice and reminder state
-    if (mounted) {
-      setState(() {
-        _isListening = false;
-        _isProcessingVoice = false;
-        _isGuidedListening = false;
-        _voiceListenCancelled = true;
-        _liveTranscript = '';
-        _voiceStatus = '';
-        _lastVoiceReminderDraft = null;
-      });
-    }
-    
+
+    _resetVoiceIdleState();
+
     await _respondFromAssistant(
       tr(
         LanguageController.isTagalog.value,
-        'I did not hear the reminder details. Please press the microphone button and try again.',
-        'Hindi ko narinig ang detalye ng paalala. I-tap muli ang microphone button at subukan ulit.',
+        'I did not hear the reminder details. Tap the microphone to try again, or tap + Add Reminder.',
+        'Hindi ko narinig ang detalye ng paalala. I-tap muli ang microphone, o i-tap ang + Magdagdag ng Paalala.',
       ),
     );
-    
-    if (mounted) {
-      Future.delayed(const Duration(milliseconds: 500), () {
-        if (mounted) {
-          setState(() => _voiceListenCancelled = false);
-        }
-      });
-    }
   }
 
   TimeOfDay? _timeFromGuidedSpeech(String value) {
     if (value.isEmpty) return null;
-    
     final normalized = _normalizeSpokenNumbers(value.trim().toLowerCase());
-    
-    // Try increasingly flexible patterns for time matching
-    // All patterns use case-insensitive matching to handle "pm", "PM", "Pm", etc.
-    
-    // Pattern 1: Hour:Minute with AM/PM in any format/case
-    // Matches: "10:30 pm", "10:30pm", "10 : 30 pm", "03:31 AM", "3:5 AM", etc.
-    var match = RegExp(
-      r'(\d{1,2})\s*[:.]?\s*(\d{1,2})\s*[:.\s]?\s*(am|pm|a\.m\.?|p\.m\.?)',
-      caseSensitive: false,
-    ).firstMatch(normalized);
-    
-    if (match != null) {
-      var hour = int.tryParse(match.group(1) ?? '') ?? 0;
-      var minute = int.tryParse(match.group(2) ?? '0') ?? 0;
-      final suffix = (match.group(3) ?? '').toLowerCase().replaceAll(RegExp(r'\.'), '').trim();
-      
-      // Validate ranges
-      if (hour < 1 || hour > 12 || minute > 59) return null;
-      
-      // Pad minute to 2 digits if needed
-      if (minute < 10) minute = minute; // Already a single digit, leave as is
-      
-      if (suffix.startsWith('p') && hour < 12) hour += 12;
-      if (suffix.startsWith('a') && hour == 12) hour = 0;
-      
-      return TimeOfDay(hour: hour.clamp(0, 23), minute: minute.clamp(0, 59));
-    }
-
-    // Pattern 2: Hour with AM/PM (no minutes) in any format/case
-    // Matches: "10 pm", "10pm", "10  p m", "3 AM", "12am", "1 p.m.", etc.
-    match = RegExp(
-      r'(\d{1,2})\s*(?:o?clock)?\s*[:.\s]?\s*(am|pm|a\.m\.?|p\.m\.?)',
-      caseSensitive: false,
-    ).firstMatch(normalized);
-    
-    if (match != null) {
-      var hour = int.tryParse(match.group(1) ?? '') ?? 0;
-      final suffix = (match.group(2) ?? '').toLowerCase().replaceAll(RegExp(r'\.'), '').trim();
-      
-      if (hour < 1 || hour > 12) return null;
-      
-      if (suffix.startsWith('p') && hour < 12) hour += 12;
-      if (suffix.startsWith('a') && hour == 12) hour = 0;
-      
-      return TimeOfDay(hour: hour.clamp(0, 23), minute: 0);
-    }
-
-    // Pattern 3: Standalone AM/PM after hour (handles variable spacing better)
-    // This catches cases where regex 2 might miss due to spacing
-    // Matches things like "10 to 11 pm", "around 3 am", etc.
-    match = RegExp(
-      r'(\d{1,2})\s*(?:o?clock)?\D{0,10}(am|pm)',
-      caseSensitive: false,
-    ).firstMatch(normalized);
-    
-    if (match != null) {
-      var hour = int.tryParse(match.group(1) ?? '') ?? 0;
-      final suffix = (match.group(2) ?? '').toLowerCase();
-      
-      if (hour < 1 || hour > 12) return null;
-      
-      if (suffix == 'pm' && hour < 12) hour += 12;
-      if (suffix == 'am' && hour == 12) hour = 0;
-      
-      return TimeOfDay(hour: hour.clamp(0, 23), minute: 0);
-    }
-
-    // Pattern 4: 24-hour format fallback (15:30, 23:45) - convert to 12-hour
-    match = RegExp(
-      r'(\d{1,2})\s*[:.]?\s*(\d{1,2})',
-    ).firstMatch(normalized);
-    
-    if (match != null) {
-      var hour = int.tryParse(match.group(1) ?? '') ?? 0;
-      final minute = int.tryParse(match.group(2) ?? '0') ?? 0;
-      
-      if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
-        // Accept 24-hour format as fallback only if it looks valid
-        if (hour > 12 || (hour == 0 && minute == 0)) {
-          // Looks like 24-hour format (e.g., 15:30, 23:45, 00:00)
-          return TimeOfDay(hour: hour, minute: minute);
-        }
-      }
-    }
-    
-    return null;
+    final parsed = VoiceTimeParser.parse(normalized);
+    if (parsed == null) return null;
+    return TimeOfDay(hour: parsed.hour, minute: parsed.minute);
   }
 
   String _normalizeSpokenNumbers(String text) {
@@ -1709,7 +1232,6 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _confirmVoiceReminder(VoiceReminderDraft draft) async {
-    _lastVoiceReminderDraft = draft;
     final isTagalog = LanguageController.isTagalog.value;
     final action = await Navigator.push<String>(
       context,
@@ -1781,6 +1303,8 @@ class _HomeScreenState extends State<HomeScreen>
     } else if (action == 'edit') {
       await _editVoiceReminderDraft(draft);
     }
+
+    _resetVoiceIdleState();
   }
 
   Widget _buildDraftDetail(String label, String value) {
@@ -1843,6 +1367,7 @@ class _HomeScreenState extends State<HomeScreen>
           'May kaparehong paalala na, kaya hindi ako gumawa ng duplicate.',
         ),
       );
+      _resetVoiceIdleState();
       return;
     }
 
@@ -1853,11 +1378,11 @@ class _HomeScreenState extends State<HomeScreen>
       'description': draft.note,
       'reminder_time': draft.scheduledAt.toIso8601String(),
       'scheduledTimeMillis': draft.scheduledAt.millisecondsSinceEpoch,
-      'category': _categoryForVoiceReminder(draft.title),
+      'category': _categoryForVoiceReminder(draft),
       'repeat_type': draft.repeatType,
       'isRepeating': draft.isRepeating,
       'repeatIntervalMinutes': draft.repeatIntervalMinutes,
-      'priority': _categoryForVoiceReminder(draft.title) == 'pill'
+      'priority': _categoryForVoiceReminder(draft) == 'pill'
           ? 'high'
           : 'normal',
       'is_completed': false,
@@ -2005,20 +1530,10 @@ class _HomeScreenState extends State<HomeScreen>
         text.contains('vitamin');
   }
 
-  String _categoryForVoiceReminder(String title) {
-    final lower = title.toLowerCase();
-    if (lower.contains('medicine') ||
-        lower.contains('medication') ||
-        lower.contains('gamot') ||
-        lower.contains('vitamin')) {
-      return 'pill';
-    }
-    if (lower.contains('doctor') || lower.contains('appointment')) {
-      return 'appointment';
-    }
-    if (lower.contains('water') || lower.contains('drink')) return 'food';
-    if (lower.contains('buy') || lower.contains('groceries')) return 'shopping';
-    return 'general';
+  String _categoryForVoiceReminder(VoiceReminderDraft draft) {
+    return VoiceReminderHints.categoryForText(
+      '${draft.title} ${draft.originalText}',
+    );
   }
 
   String _uuidV4() {
@@ -2128,6 +1643,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _reportVoiceError(Object error) async {
+    _resetVoiceIdleState();
     final message = _friendlyVoiceError(error);
     _showSnack(message);
     try {
@@ -2182,18 +1698,6 @@ class _HomeScreenState extends State<HomeScreen>
       'Voice assistant could not finish that. Please try again.',
       'Hindi natapos ng voice assistant ang utos. Pakisubukan muli.',
     );
-  }
-
-  Future<void> _onVoiceResultTap() async {
-    if (_isListening || _isProcessingVoice) return;
-    final draft = _lastVoiceReminderDraft;
-    if (draft != null) {
-      await _confirmVoiceReminder(draft);
-      return;
-    }
-    if (_enableVoiceCommandParsing && _liveTranscript.trim().isNotEmpty) {
-      await _handleCommandText(_liveTranscript);
-    }
   }
 
   @override
@@ -2310,9 +1814,7 @@ class _HomeScreenState extends State<HomeScreen>
         ? AppTheme.warning
         : theme.colorScheme.primary;
 
-    // Always show when active, or show if there's a transcript
-    final showPanel = active || _liveTranscript.isNotEmpty;
-    if (!showPanel) {
+    if (disabled) {
       return const SizedBox.shrink();
     }
 
@@ -2323,28 +1825,30 @@ class _HomeScreenState extends State<HomeScreen>
         ? tr(isTagalog, 'Recording...', 'Nagre-record...')
         : _isProcessingVoice
         ? tr(isTagalog, 'Transcribing...', 'Isinasalin sa text...')
-        : tr(isTagalog, 'Voice Result', 'Resulta ng Boses');
+        : _liveTranscript.isNotEmpty
+        ? tr(isTagalog, 'Voice Result', 'Resulta ng Boses')
+        : tr(
+            isTagalog,
+            'Tap to speak',
+            'I-tap para magsalita',
+          );
     
-    // Determine tap action
-    VoidCallback? onTapAction;
-    if (disabled) {
-      onTapAction = null;
-    } else if (_isProcessingVoice) {
-      onTapAction = null;
-    } else if (_isListening) {
-      onTapAction = _stopVoiceRecordingAndTranscribe;
-    } else if (_liveTranscript.isNotEmpty) {
-      onTapAction = _onVoiceResultTap;
-    } else {
-      onTapAction = _onSpeakCommand;
-    }
+    final onTapAction = () => unawaited(_onVoiceButtonTap());
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
       child: Tooltip(
-        message: disabled
-            ? tr(isTagalog, 'Answering voice prompt...', 'Sumasagot sa voice prompt...')
-            : tr(isTagalog, 'Voice Assistant - Press to Record', 'Voice Assistant - Pindutin para mag-record'),
+        message: _isListening || _isProcessingVoice
+            ? tr(
+                isTagalog,
+                'Voice Assistant - Press to stop',
+                'Voice Assistant - Pindutin para tumigil',
+              )
+            : tr(
+                isTagalog,
+                'Voice Assistant - Press to record',
+                'Voice Assistant - Pindutin para mag-record',
+              ),
         child: InkWell(
           onTap: onTapAction,
           borderRadius: BorderRadius.circular(20),
@@ -2416,6 +1920,12 @@ class _HomeScreenState extends State<HomeScreen>
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ],
+                            if (_voiceParserLabel != null &&
+                                !_isListening &&
+                                !_isProcessingVoice) ...[
+                              const SizedBox(height: 10),
+                              _buildVoiceParserBadge(theme, isTagalog),
+                            ],
                           ],
                         ),
                       ),
@@ -2448,6 +1958,68 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildVoiceParserBadge(ThemeData theme, bool isTagalog) {
+    final label = _voiceParserLabel;
+    if (label == null) return const SizedBox.shrink();
+
+    final badgeColor = _voiceUsedGemma
+        ? theme.colorScheme.primaryContainer
+        : theme.colorScheme.surfaceContainerHighest;
+    final badgeTextColor = _voiceUsedGemma
+        ? theme.colorScheme.onPrimaryContainer
+        : theme.colorScheme.onSurfaceVariant;
+    final icon = _voiceUsedGemma ? Icons.auto_awesome : Icons.rule;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: badgeColor,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: _voiceUsedGemma
+                  ? theme.colorScheme.primary.withAlpha(80)
+                  : theme.colorScheme.outlineVariant,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: badgeTextColor),
+              const SizedBox(width: 6),
+              Text(
+                tr(
+                  isTagalog,
+                  'Parser: $label',
+                  'Parser: $label',
+                ),
+                style: GoogleFonts.nunitoSans(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: badgeTextColor,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_voiceParserDetail != null && _voiceParserDetail!.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            _voiceParserDetail!,
+            style: GoogleFonts.nunitoSans(
+              fontSize: 13,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ],
     );
   }
 

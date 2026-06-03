@@ -1,4 +1,6 @@
 import 'package:lifeease/core/services/backend/edge_ai_service.dart';
+import 'package:lifeease/features/voice/application/gemma_nlp_service.dart';
+import 'package:lifeease/services/voice/voice_time_parser.dart';
 
 enum LightweightNlpModel { gemma2bIt, mobileBertIntent }
 
@@ -7,6 +9,11 @@ enum VoiceIntentType {
   callEmergency,
   translate,
   summarize,
+  reminderList,
+  dailySchedule,
+  navigation,
+  statistics,
+  internet,
   unknown,
 }
 
@@ -22,6 +29,9 @@ class VoiceIntentResult {
   final List<String> detectedKeywords;
   final LightweightNlpModel recommendedPrimaryModel;
   final LightweightNlpModel recommendedSecondaryModel;
+  final String? modelUsed;
+  final bool usedGemma;
+  final String? nlpFailureReason;
 
   const VoiceIntentResult({
     required this.type,
@@ -35,23 +45,33 @@ class VoiceIntentResult {
     required this.detectedKeywords,
     required this.recommendedPrimaryModel,
     required this.recommendedSecondaryModel,
+    this.modelUsed,
+    this.usedGemma = false,
+    this.nlpFailureReason,
   });
 
   Map<String, dynamic> toJson() => {
     'intent': intent,
     'task': task,
+    'summary': summary,
     'time': time,
     'repeat': repeat,
     'confidence': confidence,
     'keywords': detectedKeywords,
+    if (modelUsed != null) 'model': modelUsed,
+    'usedGemma': usedGemma,
   };
 }
 
 class VoiceCommandProcessingModule {
-  final EdgeAiService _edgeAi;
+  VoiceCommandProcessingModule({
+    EdgeAiService? edgeAi,
+    GemmaNlpService? gemmaNlp,
+  }) : _edgeAi = edgeAi ?? EdgeAiService(),
+       _gemmaNlp = gemmaNlp ?? GemmaNlpService();
 
-  VoiceCommandProcessingModule({EdgeAiService? edgeAi})
-    : _edgeAi = edgeAi ?? EdgeAiService();
+  final EdgeAiService _edgeAi;
+  final GemmaNlpService _gemmaNlp;
 
   static const List<String> _keywords = [
     'medicine',
@@ -64,19 +84,44 @@ class VoiceCommandProcessingModule {
     'call',
     'alarm',
     'task',
+    'uminom',
+    'water',
+    'tubig',
   ];
 
+  bool get isGemmaAvailable => _gemmaNlp.isAvailable || _edgeAi.isConfigured;
+
+  /// Parses spoken command text using Gemma 2 when available, with local fallback.
   Future<VoiceIntentResult> parseAsync(String rawText) async {
-    if (_edgeAi.isConfigured && rawText.trim().isNotEmpty) {
-      final remote = await _edgeAi.processCommand(rawText);
-      final parsed = _fromRemoteResult(rawText, remote);
-      if (parsed != null) return parsed;
+    final trimmed = rawText.trim();
+    if (trimmed.isEmpty) {
+      return parse(trimmed);
     }
 
-    return Future<VoiceIntentResult>.microtask(() => parse(rawText));
+    String? gemmaFailureReason;
+
+    if (_gemmaNlp.isAvailable) {
+      final gemmaResult = await _gemmaNlp.parseCommand(trimmed);
+      final parsed = _fromRemoteResult(
+        trimmed,
+        gemmaResult.data,
+        usedGemma: true,
+      );
+      if (parsed != null) return parsed;
+      gemmaFailureReason = gemmaResult.errorMessage ?? _gemmaNlp.lastErrorMessage;
+    }
+
+    if (_edgeAi.isConfigured) {
+      final remote = await _edgeAi.processCommand(trimmed);
+      final parsed = _fromRemoteResult(trimmed, remote, usedGemma: true);
+      if (parsed != null) return parsed;
+      gemmaFailureReason ??= 'Supabase edge AI did not return a Gemma result.';
+    }
+
+    return parse(trimmed, nlpFailureReason: gemmaFailureReason);
   }
 
-  VoiceIntentResult parse(String rawText) {
+  VoiceIntentResult parse(String rawText, {String? nlpFailureReason}) {
     final text = rawText.trim().toLowerCase();
     final normalized = text.replaceAll(RegExp(r'\s+'), ' ');
     final type = _detectIntent(normalized);
@@ -95,6 +140,9 @@ class VoiceCommandProcessingModule {
       detectedKeywords: keywords,
       recommendedPrimaryModel: LightweightNlpModel.gemma2bIt,
       recommendedSecondaryModel: LightweightNlpModel.mobileBertIntent,
+      modelUsed: 'gemma-2-lightweight-local-fallback',
+      usedGemma: false,
+      nlpFailureReason: nlpFailureReason,
     );
   }
 
@@ -116,8 +164,11 @@ class VoiceCommandProcessingModule {
       RegExp(r'remind me to\s+', caseSensitive: false),
       RegExp(r'add (a )?reminder to\s+', caseSensitive: false),
       RegExp(r'set (an )?alarm to\s+', caseSensitive: false),
+      RegExp(r'paalalahanan mo ako\s+', caseSensitive: false),
+      RegExp(r'magdagdag ng paalala\s+', caseSensitive: false),
       RegExp(r'every day.*$', caseSensitive: false),
       RegExp(r'daily.*$', caseSensitive: false),
+      RegExp(r'araw-araw.*$', caseSensitive: false),
       RegExp(r'at\s+\d{1,2}(:\d{2})?\s*(am|pm).*$', caseSensitive: false),
       RegExp(r'after\s+(breakfast|lunch|dinner).*$', caseSensitive: false),
     ];
@@ -131,15 +182,16 @@ class VoiceCommandProcessingModule {
   }
 
   String? _extractTime(String text) {
-    final match = RegExp(
-      r'\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b',
-    ).firstMatch(text);
-    if (match == null) return null;
-    final hour = int.tryParse(match.group(1) ?? '');
-    final minute = int.tryParse(match.group(2) ?? '0') ?? 0;
-    final suffix = (match.group(3) ?? '').toUpperCase();
-    if (hour == null) return null;
-    return '${hour.clamp(1, 12)}:${minute.toString().padLeft(2, '0')} $suffix';
+    final parsed = VoiceTimeParser.parse(text);
+    if (parsed == null) return null;
+    var displayHour = parsed.hour;
+    final suffix = parsed.hour >= 12 ? 'PM' : 'AM';
+    if (displayHour == 0) {
+      displayHour = 12;
+    } else if (displayHour > 12) {
+      displayHour -= 12;
+    }
+    return '$displayHour:${parsed.minute.toString().padLeft(2, '0')} $suffix';
   }
 
   String? _extractRepeat(String text) {
@@ -176,6 +228,16 @@ class VoiceCommandProcessingModule {
         return 'translate';
       case VoiceIntentType.summarize:
         return 'summarize';
+      case VoiceIntentType.reminderList:
+        return 'reminder_list';
+      case VoiceIntentType.dailySchedule:
+        return 'daily_schedule';
+      case VoiceIntentType.navigation:
+        return 'navigation';
+      case VoiceIntentType.statistics:
+        return 'statistics';
+      case VoiceIntentType.internet:
+        return 'internet_query';
       case VoiceIntentType.unknown:
         return 'unknown';
     }
@@ -188,8 +250,9 @@ class VoiceCommandProcessingModule {
 
   VoiceIntentResult? _fromRemoteResult(
     String rawText,
-    Map<String, dynamic>? data,
-  ) {
+    Map<String, dynamic>? data, {
+    required bool usedGemma,
+  }) {
     if (data == null || data['usedFallback'] == true) return null;
 
     final normalized = rawText.trim().toLowerCase().replaceAll(
@@ -198,9 +261,12 @@ class VoiceCommandProcessingModule {
     );
     final intent = data['intent']?.toString() ?? 'unknown';
     final type = _typeFromIntent(intent);
+    if (type == VoiceIntentType.unknown) return null;
+
     final task = data['task']?.toString().trim();
     final summary = data['summary']?.toString().trim();
     final confidence = (data['confidence'] as num?)?.toDouble() ?? 0.75;
+    if (confidence < 0.45) return null;
 
     return VoiceIntentResult(
       type: type,
@@ -218,6 +284,8 @@ class VoiceCommandProcessingModule {
       detectedKeywords: _keywords.where(normalized.contains).toList(),
       recommendedPrimaryModel: LightweightNlpModel.gemma2bIt,
       recommendedSecondaryModel: LightweightNlpModel.mobileBertIntent,
+      modelUsed: data['model']?.toString(),
+      usedGemma: usedGemma,
     );
   }
 
@@ -233,6 +301,16 @@ class VoiceCommandProcessingModule {
         return VoiceIntentType.translate;
       case 'summarize':
         return VoiceIntentType.summarize;
+      case 'reminder_list':
+        return VoiceIntentType.reminderList;
+      case 'daily_schedule':
+        return VoiceIntentType.dailySchedule;
+      case 'navigation':
+        return VoiceIntentType.navigation;
+      case 'statistics':
+        return VoiceIntentType.statistics;
+      case 'internet_query':
+        return VoiceIntentType.internet;
       default:
         return VoiceIntentType.unknown;
     }
@@ -243,21 +321,53 @@ class VoiceCommandProcessingModule {
         text.contains('remind me') ||
         text.contains('schedule') ||
         text.contains('paalala') ||
-        text.contains('alarm')) {
+        text.contains('paalalahanan') ||
+        text.contains('alarm') ||
+        text.contains('uminom') ||
+        text.contains('gamot')) {
       return VoiceIntentType.addReminder;
     }
     if (text.contains('call') ||
         text.contains('emergency') ||
-        text.contains('dial')) {
+        text.contains('dial') ||
+        text.contains('tawag')) {
       return VoiceIntentType.callEmergency;
     }
     if (text.contains('translate') ||
         text.contains('tagalog') ||
-        text.contains('english')) {
+        text.contains('english') ||
+        text.contains('isalin')) {
       return VoiceIntentType.translate;
     }
     if (text.contains('summarize') || text.contains('summary')) {
       return VoiceIntentType.summarize;
+    }
+    if (text.contains('show my reminders') ||
+        text.contains('list reminders') ||
+        text.contains('mga paalala') ||
+        text.contains('next reminder')) {
+      return VoiceIntentType.reminderList;
+    }
+    if (text.contains('today schedule') ||
+        text.contains('daily schedule') ||
+        text.contains('iskedyul')) {
+      return VoiceIntentType.dailySchedule;
+    }
+    if (text.contains('open settings') ||
+        text.contains('open dashboard') ||
+        text.contains('buksan')) {
+      return VoiceIntentType.navigation;
+    }
+    if (text.contains('statistics') ||
+        text.contains('completion rate') ||
+        text.contains('ulat')) {
+      return VoiceIntentType.statistics;
+    }
+    if (text.contains('weather') ||
+        text.contains('panahon') ||
+        text.contains('what time') ||
+        text.contains('anong oras')) {
+      return VoiceIntentType.internet;
     }
     return VoiceIntentType.unknown;
   }

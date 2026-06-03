@@ -2,7 +2,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 
+import 'package:lifeease/core/navigation/app_navigator.dart';
 import 'package:lifeease/core/utils/app_export.dart';
+import 'package:lifeease/features/reminders/application/due_reminder_prompt_coordinator.dart';
 import 'package:lifeease/core/constants/env_config.dart';
 import 'package:lifeease/shared/providers/language_controller.dart';
 import 'package:lifeease/shared/providers/settings_controller.dart';
@@ -216,7 +218,9 @@ class MyApp extends StatelessWidget {
             return ValueListenableBuilder<bool>(
               valueListenable: LanguageController.isTagalog,
               builder: (context, isTagalog, child) {
-                return MaterialApp(
+                return DueReminderPromptListener(
+                  child: MaterialApp(
+                  navigatorKey: AppNavigator.key,
                   title: 'LifeEase',
                   theme: isHighContrast
                       ? AppTheme.highContrastLightTheme
@@ -242,6 +246,7 @@ class MyApp extends StatelessWidget {
                   debugShowCheckedModeBanner: false,
                   routes: AppRoutes.routes,
                   initialRoute: initialRoute,
+                ),
                 );
               },
             );

@@ -5,7 +5,7 @@ import 'package:lifeease/core/themes/app_theme.dart';
 import 'package:lifeease/core/services/tts/tts_language_service.dart';
 import 'package:lifeease/shared/widgets/custom_icon_widget.dart';
 import 'package:lifeease/shared/widgets/status_badge_widget.dart';
-import '../home_screen.dart';
+import 'package:lifeease/features/reminders/models/reminder_model.dart';
 
 class ReminderCardWidget extends StatefulWidget {
   final ReminderModel reminder;

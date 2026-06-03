@@ -71,17 +71,33 @@ async function nlp(body: Record<string, unknown>) {
 
   const text = String(body.text ?? "").toLowerCase();
   const interval = text.match(/every\s+(\d+)\s+(hour|hours|minute|minutes)/);
-  const isHydration = text.includes("water") || text.includes("drink");
-  const isEmergency = text.includes("emergency") || text.includes("call");
+  const isHydration = text.includes("water") || text.includes("drink") ||
+    text.includes("tubig") || text.includes("uminom");
+  const isEmergency = text.includes("emergency") || text.includes("call") ||
+    text.includes("tawag");
   const isTranslate = text.includes("translate") ||
     text.includes("tagalog") ||
-    text.includes("english");
+    text.includes("english") ||
+    text.includes("isalin");
   const isSummary = text.includes("summarize") || text.includes("summary");
+  const isReminderList = text.includes("show my reminders") ||
+    text.includes("mga paalala") ||
+    text.includes("list reminders");
+  const isSchedule = text.includes("today schedule") ||
+    text.includes("daily schedule") ||
+    text.includes("iskedyul");
+  const isStats = text.includes("statistics") || text.includes("ulat");
+  const isInternet = text.includes("weather") || text.includes("panahon") ||
+    text.includes("what time") || text.includes("anong oras");
 
   let intent = "create_reminder";
   if (isEmergency) intent = "call_emergency";
   if (isTranslate) intent = "translate";
   if (isSummary) intent = "summarize";
+  if (isReminderList) intent = "reminder_list";
+  if (isSchedule) intent = "daily_schedule";
+  if (isStats) intent = "statistics";
+  if (isInternet) intent = "internet_query";
 
   return json({
     intent,
@@ -102,17 +118,25 @@ async function nlp(body: Record<string, unknown>) {
 
 async function parseWithGemma(body: Record<string, unknown>) {
   const apiKey = Deno.env.get("GEMINI_API_KEY") ?? Deno.env.get("GEMMA_API_KEY");
-  const model = Deno.env.get("GEMMA_MODEL") ?? "gemma-4-26b-a4b-it";
+  const model = Deno.env.get("GEMMA_MODEL") ?? "gemma-2-2b-it";
   const text = String(body.text ?? "").trim();
   if (!apiKey || !text) return null;
 
   const prompt = [
-    "You are the LifeEase PH voice command parser.",
-    "Recognize English, Tagalog, and mixed English-Tagalog commands.",
+    "You are the LifeEase PH voice command parser powered by Gemma 2.",
+    "Recognize English, Tagalog, and mixed English-Tagalog spoken commands.",
+    "Summarize the command in one short sentence (max 90 characters).",
     "Return only valid JSON with these keys:",
     "intent, task, summary, time, repeat, confidence, language.",
-    "Allowed intents: create_reminder, call_emergency, translate, summarize, unknown.",
-    "Use null for missing time or repeat. Confidence must be 0 to 1.",
+    "Allowed intents:",
+    "create_reminder, call_emergency, translate, summarize,",
+    "reminder_list, daily_schedule, navigation, statistics,",
+    "internet_query, unknown.",
+    "task: the core action or reminder title (e.g. Take medicine, Uminom ng gamot).",
+    "time: 12-hour format like 8:00 AM when mentioned, else null.",
+    "repeat: daily, weekly, monthly, or null.",
+    "confidence: number from 0 to 1.",
+    "language: en, tl, mixed, or unknown.",
     `User text: ${JSON.stringify(text)}`,
   ].join("\n");
 
@@ -200,17 +224,23 @@ function parseJsonObject(content: string) {
 
 function normalizeIntent(value: unknown) {
   const intent = String(value ?? "unknown").toLowerCase();
-  if (
-    intent === "create_reminder" ||
-    intent === "call_emergency" ||
-    intent === "translate" ||
-    intent === "summarize"
-  ) {
-    return intent;
-  }
+  const allowed = new Set([
+    "create_reminder",
+    "call_emergency",
+    "translate",
+    "summarize",
+    "reminder_list",
+    "daily_schedule",
+    "navigation",
+    "statistics",
+    "internet_query",
+    "unknown",
+  ]);
+  if (allowed.has(intent)) return intent;
   if (intent === "add_reminder" || intent === "hydration_reminder") {
     return "create_reminder";
   }
+  if (intent === "emergency") return "call_emergency";
   return "unknown";
 }
 

@@ -99,21 +99,62 @@ class TtsLanguageService {
   static String reminderSpeech(String title, String description) {
     final cleanTitle = title.trim();
     final cleanDescription = description.trim();
+    final lowerTitle = cleanTitle.toLowerCase();
+
+    String body = '';
     if (currentLanguage == AppSpeechLanguage.tagalog) {
-      final body = cleanTitle.isEmpty
-          ? 'May paalala ka ngayon'
-          : _tagalogReminderBody(cleanTitle);
-      if (cleanDescription.isEmpty) return 'Paalala: $body.';
-      return 'Paalala: $body. Tala: $cleanDescription.';
+      if (lowerTitle == 'taking medicine' || lowerTitle == 'take your medicine' || lowerTitle == 'medicine' || lowerTitle == 'gamot') {
+        final lowerDesc = cleanDescription.toLowerCase();
+        if (lowerTitle.contains('inumin') || lowerTitle.contains('gamot') || 
+            lowerDesc.contains('inumin') || lowerDesc.contains('gamot') || 
+            lowerDesc.contains('kumain') || lowerDesc.contains('uminom') || 
+            lowerDesc.contains('pagkatapos')) {
+          body = "Oras na para inumin ang iyong gamot";
+        } else if (lowerTitle.contains('take') || lowerTitle.contains('medicine') || 
+                   lowerDesc.contains('take') || lowerDesc.contains('medicine')) {
+          body = "Oras na para mag-take ng medicine";
+        } else {
+          body = "Oras na para inumin ang iyong gamot";
+        }
+      } else if (lowerTitle.contains('mag-take') || lowerTitle.contains('medicine')) {
+        body = "Oras na para mag-take ng medicine";
+      } else if (lowerTitle.contains('inumin') || lowerTitle.contains('gamot')) {
+        body = "Oras na para inumin ang iyong gamot";
+      } else {
+        if (lowerTitle.startsWith('oras na para')) {
+          body = cleanTitle;
+        } else if (lowerTitle.startsWith('inumin') || lowerTitle.startsWith('mag-take') || lowerTitle.startsWith('uminom') || lowerTitle.startsWith('kumain')) {
+          body = 'Oras na para $cleanTitle';
+        } else {
+          body = 'Oras na para sa $cleanTitle';
+        }
+      }
+    } else {
+      if (lowerTitle == 'taking medicine' || lowerTitle == 'take your medicine' || lowerTitle == 'medicine') {
+        body = "It's time to take your medicine";
+      } else if (lowerTitle.startsWith("it's time")) {
+        body = cleanTitle;
+      } else if (lowerTitle.startsWith('take ') ||
+          lowerTitle.startsWith('drink ') ||
+          lowerTitle.startsWith('eat ') ||
+          lowerTitle.startsWith('call ') ||
+          lowerTitle.startsWith('go ') ||
+          lowerTitle.startsWith('check ')) {
+        body = "It's time to $cleanTitle";
+      } else {
+        body = "It's time for $cleanTitle";
+      }
     }
 
-    final body = cleanTitle.isEmpty
-        ? 'You have a reminder now'
-        : _englishReminderBody(cleanTitle);
-    if (cleanDescription.isEmpty) return 'Reminder: $body.';
-    return 'Reminder: $body. Note: $cleanDescription.';
+    if (cleanDescription.isEmpty) {
+      return body.endsWith('.') ? body : '$body.';
+    }
+    final sep = (body.endsWith('.') || body.endsWith('!') || body.endsWith('?')) ? ' ' : '. ';
+    final end = (cleanDescription.endsWith('.') || cleanDescription.endsWith('!') || cleanDescription.endsWith('?')) ? '' : '.';
+    return '$body$sep$cleanDescription$end';
   }
 
+  // ignore: unused_element
   static String _englishReminderBody(String title) {
     final lower = title.toLowerCase();
     if (lower.startsWith('take ') ||
@@ -127,6 +168,7 @@ class TtsLanguageService {
     return title;
   }
 
+  // ignore: unused_element
   static String _tagalogReminderBody(String title) {
     final lower = title.toLowerCase();
     if (lower.contains('gamot') || lower.contains('medicine')) {

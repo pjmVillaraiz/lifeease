@@ -14,6 +14,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import 'package:lifeease/core/services/backend/reminder_repository.dart';
 import 'package:lifeease/core/services/tts/tts_language_service.dart';
+import 'package:lifeease/services/tts/inworld_tts_service.dart';
 import 'package:lifeease/shared/providers/settings_controller.dart';
 
 @pragma('vm:entry-point')
@@ -579,8 +580,28 @@ class ReminderNotificationService {
       debugPrintStack(stackTrace: stackTrace);
     }
 
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      await _speakNativeReminderNow(alarmId: alarmId, reminder: reminder);
+    final text = _spokenTextFor(reminder);
+    final reminderId = id ?? 'unknown';
+    bool inworldSuccess = false;
+
+    try {
+      final inworldService = InworldTtsService();
+      final filePath = await inworldService.generateSpeechFile(
+        text,
+        reminderId,
+        languageCode: reminder['language']?.toString() ?? TtsLanguageService.currentLanguage.code,
+      );
+      if (filePath != null && filePath.isNotEmpty) {
+        inworldSuccess = await inworldService.playAudio(filePath);
+      }
+    } catch (error) {
+      debugPrint('Inworld TTS generation or playback failed: $error');
+    }
+
+    if (!inworldSuccess) {
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        await _speakNativeReminderNow(alarmId: alarmId, reminder: reminder);
+      }
     }
 
     await _markOccurrenceFired(reminder, scheduledAt);
@@ -588,11 +609,13 @@ class ReminderNotificationService {
 
     if (defaultTargetPlatform == TargetPlatform.android) return;
 
-    try {
-      await _speakReminder(reminder);
-    } catch (error, stackTrace) {
-      debugPrint('Reminder speech failed: $error');
-      debugPrintStack(stackTrace: stackTrace);
+    if (!inworldSuccess) {
+      try {
+        await _speakReminder(reminder);
+      } catch (error, stackTrace) {
+        debugPrint('Reminder speech failed: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }
     }
   }
 
@@ -697,6 +720,11 @@ class ReminderNotificationService {
 
       await _cancelActionAlarms(payload);
       await _tts.stop();
+      try {
+        await InworldTtsService().stopAudio();
+      } catch (e) {
+        debugPrint('Error stopping Inworld audio: $e');
+      }
 
       if (payload.reminderId.isEmpty) {
         debugPrint(

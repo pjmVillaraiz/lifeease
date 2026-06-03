@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import 'package:lifeease/core/services/backend/edge_ai_service.dart';
+import 'package:lifeease/services/speech/groq_service.dart';
 
 class WhisperTranscript {
   final String text;
@@ -15,12 +15,11 @@ class WhisperTranscript {
 }
 
 class WhisperApiService {
-  final EdgeAiService _edgeAi;
+  final GroqService _groq;
 
-  WhisperApiService({EdgeAiService? edgeAi})
-    : _edgeAi = edgeAi ?? EdgeAiService();
+  WhisperApiService({GroqService? groq}) : _groq = groq ?? GroqService();
 
-  bool get isConfigured => _edgeAi.isConfigured;
+  bool get isConfigured => _groq.isConfigured;
 
   Future<WhisperTranscript> transcribeAudioBytes({
     required Uint8List audioBytes,
@@ -29,13 +28,19 @@ class WhisperApiService {
     int maxRetries = 2,
   }) async {
     for (var attempt = 0; attempt <= maxRetries; attempt++) {
-      final text = await _edgeAi.transcribeAudio(
-        audioBytes: audioBytes,
-        fileName: fileName,
-        languageHint: languageHint,
-      );
-      if (text != null && text.trim().isNotEmpty) {
-        return WhisperTranscript(text: text.trim(), language: languageHint);
+      try {
+        final transcript = await _groq.transcribeBytes(
+          audioBytes: audioBytes,
+          fileName: fileName,
+        );
+        if (transcript.text.trim().isNotEmpty) {
+          return WhisperTranscript(
+            text: transcript.text.trim(),
+            language: languageHint,
+          );
+        }
+      } on GroqTranscriptionException {
+        if (attempt == maxRetries) rethrow;
       }
       await Future<void>.delayed(Duration(milliseconds: 350 * (attempt + 1)));
     }

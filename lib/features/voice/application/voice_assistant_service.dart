@@ -93,7 +93,7 @@ class VoiceAssistantService {
     var body = rawText.trim();
     body = body.replaceAll(
       RegExp(
-        r'^\s*(add reminder|add a reminder|magdagdag ng paalala)\s*[:,-]?\s*',
+        r'^\s*(add reminder|add a reminder|create reminder|set reminder|set a reminder|reminder ako|magdagdag ng paalala|paalala ako)\s*[:,-]?\s*',
         caseSensitive: false,
       ),
       '',
@@ -166,7 +166,14 @@ class VoiceAssistantService {
   bool _looksLikeReminderCommand(String text) {
     return text.contains('add reminder') ||
         text.contains('add a reminder') ||
+        text.contains('create reminder') ||
+        text.contains('set reminder') ||
+        text.contains('set a reminder') ||
         text.startsWith('remind me') ||
+        text.startsWith('reminder ako') ||
+        text.startsWith('paalala ako') ||
+        text.startsWith('mag remind') ||
+        text.startsWith('mag-remind') ||
         text.contains('magdagdag ng paalala') ||
         text.contains('paalalahanan');
   }
@@ -359,13 +366,15 @@ class VoiceAssistantService {
 
   VoiceReminderDraft? _parseInlineStructuredReminder(String rawText) {
     final normalized = _normalize(rawText);
-    if (!normalized.contains('add reminder') ||
+    if (!(normalized.contains('add reminder') ||
+            normalized.contains('create reminder') ||
+            normalized.contains('set reminder')) ||
         !normalized.contains('time ') && !normalized.contains('oras ')) {
       return null;
     }
 
     final titleMatch = RegExp(
-      r'add (?:a )?reminder\s+(.+?)(?:\s+note\s+|\s+tala\s+|\s+today\b|\s+tomorrow\b|\s+ngayon\b|\s+bukas\b|\s+time\s+|\s+oras\s+|$)',
+      r'(?:add (?:a )?reminder|create reminder|set (?:a )?reminder)\s+(.+?)(?:\s+note\s+|\s+tala\s+|\s+today\b|\s+tomorrow\b|\s+ngayon\b|\s+bukas\b|\s+time\s+|\s+oras\s+|$)',
       caseSensitive: false,
     ).firstMatch(rawText);
     final noteMatch = RegExp(

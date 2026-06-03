@@ -45,12 +45,14 @@ class EdgeAiService {
     required String text,
     double speed = 0.95,
     double volume = 1.0,
+    String? language,
   }) async {
     final response = await _invoke('ai', {
       'action': 'tts',
       'text': text,
       'speed': speed,
       'volume': volume,
+      if (language != null) 'language': language,
     });
     final audio = response?['audioBytes'] as List<dynamic>?;
     if (audio == null) return null;

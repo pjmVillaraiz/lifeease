@@ -13,6 +13,7 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
 import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
@@ -116,6 +117,21 @@ class MainActivity : FlutterFragmentActivity() {
                     }
 
                     ReminderSpeechScheduler.cancel(applicationContext, alarmId)
+                    result.success(null)
+                }
+                "playAudioFile" -> {
+                    val filePath = call.argument<String>("filePath")
+                    if (filePath.isNullOrBlank()) {
+                        result.error("invalid_args", "Missing audio file path.", null)
+                        return@setMethodCallHandler
+                    }
+                    ReminderSpeechPlayer.stop(null)
+                    ReminderAudioPlayer.play(applicationContext, filePath)
+                    result.success(null)
+                }
+                "stopAudio" -> {
+                    ReminderAudioPlayer.stop()
+                    ReminderSpeechPlayer.stop(null)
                     result.success(null)
                 }
                 else -> result.notImplemented()
@@ -392,6 +408,7 @@ private object ReminderSpeechScheduler {
 
         removeStoredAlarm(context, alarmId)
         ReminderSpeechPlayer.stop(alarmId)
+        ReminderAudioPlayer.stop()
     }
 
     fun rescheduleStoredAlarms(context: Context) {
@@ -629,6 +646,43 @@ private object ReminderSpeechPlayer {
             Locale.forLanguageTag("fil-PH")
         } else {
             Locale.US
+        }
+    }
+}
+
+private object ReminderAudioPlayer {
+    private var mediaPlayer: MediaPlayer? = null
+
+    fun play(context: Context, filePath: String) {
+        stop()
+        try {
+            mediaPlayer = MediaPlayer().apply {
+                setDataSource(filePath)
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                prepare()
+                start()
+                setOnCompletionListener {
+                    stop()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun stop() {
+        try {
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+        } catch (e: Exception) {
+            // ignore
+        } finally {
+            mediaPlayer = null
         }
     }
 }

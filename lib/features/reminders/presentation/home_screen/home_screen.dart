@@ -24,7 +24,7 @@ import 'package:lifeease/features/sus_evaluation/application/sus_processing_modu
 import 'package:lifeease/features/translation/application/language_translation_processing_module.dart';
 import 'package:lifeease/features/voice/application/speech_processing_module.dart';
 import 'package:lifeease/features/voice/application/voice_assistant_service.dart';
-import 'package:lifeease/features/voice/application/voice_command_processing_module.dart';
+import 'package:lifeease/services/voice/command_processor.dart';
 
 import './widgets/reminder_card_widget.dart';
 
@@ -240,6 +240,18 @@ class ReminderModel {
   }
 }
 
+class _GuidedFrequency {
+  const _GuidedFrequency(
+    this.repeatType,
+    this.repeatIntervalMinutes,
+    this.label,
+  );
+
+  final String repeatType;
+  final int repeatIntervalMinutes;
+  final String label;
+}
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -249,6 +261,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
+  static const bool _enableVoiceCommandParsing = true;
+
   int _currentNavIndex = 0;
   bool _isLoading = true;
   List<ReminderModel> _reminders = [];
@@ -256,6 +270,8 @@ class _HomeScreenState extends State<HomeScreen>
   bool _isProcessingVoice = false;
   bool _voiceListenCancelled = false;
   String _liveTranscript = '';
+  String _voiceStatus = '';
+  VoiceReminderDraft? _lastVoiceReminderDraft;
   String? _firstName;
 
   late final ReminderRepository _reminderRepository;
@@ -263,7 +279,7 @@ class _HomeScreenState extends State<HomeScreen>
   late final UserProfileService _profileService;
   late final SpeechProcessingModule _speechModule;
   late final VoiceAssistantService _assistantService;
-  late final VoiceCommandProcessingModule _voiceProcessor;
+  late final CommandProcessor _commandProcessor;
   late final ReminderInsightsService _insightsService;
   late final LanguageTranslationProcessingModule _translationProcessor;
   late final EmergencyRouteProcessingModule _emergencyRouteProcessor;
@@ -301,7 +317,7 @@ class _HomeScreenState extends State<HomeScreen>
     _profileService = UserProfileService();
     _speechModule = SpeechProcessingModule();
     _assistantService = const VoiceAssistantService();
-    _voiceProcessor = VoiceCommandProcessingModule();
+    _commandProcessor = CommandProcessor(assistant: _assistantService);
     _insightsService = const ReminderInsightsService();
     _translationProcessor = LanguageTranslationProcessingModule();
     _emergencyRouteProcessor = EmergencyRouteProcessingModule();
@@ -348,6 +364,7 @@ class _HomeScreenState extends State<HomeScreen>
           _isProcessingVoice = false;
           _voiceListenCancelled = true;
           _liveTranscript = '';
+          _voiceStatus = '';
         });
       }
     }
@@ -455,51 +472,98 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _onSpeakCommand() async {
     if (_isListening) {
-      await _cancelVoiceListening();
+      await _stopVoiceRecordingAndTranscribe();
       return;
     }
 
     HapticFeedback.heavyImpact();
+    final isTagalog = LanguageController.isTagalog.value;
     setState(() {
-      _isListening = true;
-      _isProcessingVoice = false;
+      _isListening = false;
+      _isProcessingVoice = true;
       _voiceListenCancelled = false;
       _liveTranscript = '';
+      _voiceStatus = tr(isTagalog, "I'm listening.", 'Nakikinig ako.');
+      _lastVoiceReminderDraft = null;
     });
     try {
-      final spokenText = await _speechModule.listenOnce(
-        listenFor: const Duration(seconds: 10),
-        onLiveText: (text) {
+      await _speechModule.speak(
+        tr(isTagalog, "I'm listening.", 'Nakikinig ako.'),
+      );
+      if (!mounted) return;
+      setState(() {
+        _isListening = true;
+        _isProcessingVoice = false;
+        _voiceStatus = tr(isTagalog, 'Recording...', 'Nagre-record...');
+      });
+      await _speechModule.startGroqRecording();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isListening = false;
+        _isProcessingVoice = false;
+        _voiceListenCancelled = false;
+        _voiceStatus = '';
+      });
+      _showSnack(error.toString());
+    }
+  }
+
+  Future<void> _stopVoiceRecordingAndTranscribe() async {
+    if (!_isListening) return;
+
+    HapticFeedback.mediumImpact();
+    setState(() {
+      _isListening = false;
+      _isProcessingVoice = true;
+      _voiceStatus = tr(
+        LanguageController.isTagalog.value,
+        'Uploading...',
+        'Ina-upload...',
+      );
+    });
+
+    try {
+      final transcript = await _speechModule.stopGroqRecordingAndTranscribe(
+        onStatus: (status) {
           if (!mounted) return;
-          setState(() => _liveTranscript = text);
+          setState(() {
+            _voiceStatus = status == 'Transcribing...'
+                ? tr(
+                    LanguageController.isTagalog.value,
+                    'Transcribing...',
+                    'Isinasalin sa text...',
+                  )
+                : tr(
+                    LanguageController.isTagalog.value,
+                    'Uploading...',
+                    'Ina-upload...',
+                  );
+          });
         },
       );
       if (!mounted) return;
 
-      if (spokenText != null && spokenText.isNotEmpty) {
-        setState(() {
-          _isListening = false;
-          _isProcessingVoice = true;
-          _liveTranscript = spokenText;
-        });
-        await _handleCommandText(spokenText);
-      } else if (!_voiceListenCancelled) {
-        _showSnack(
-          tr(
-            LanguageController.isTagalog.value,
-            'No speech was heard. Please try again.',
-            'Walang narinig na boses. Subukan muli.',
-          ),
-        );
+      setState(() {
+        _isProcessingVoice = false;
+        _voiceListenCancelled = false;
+        _voiceStatus = '';
+        _liveTranscript = transcript ?? '';
+      });
+      if (_enableVoiceCommandParsing &&
+          transcript != null &&
+          transcript.trim().isNotEmpty) {
+        await _handleCommandText(transcript);
       }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isListening = false;
-          _isProcessingVoice = false;
-          _voiceListenCancelled = false;
-        });
-      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isListening = false;
+        _isProcessingVoice = false;
+        _voiceListenCancelled = false;
+        _voiceStatus = '';
+      });
+      _showSnack(error.toString());
     }
   }
 
@@ -511,6 +575,7 @@ class _HomeScreenState extends State<HomeScreen>
       _isListening = false;
       _isProcessingVoice = false;
       _liveTranscript = '';
+      _voiceStatus = '';
     });
   }
 
@@ -520,70 +585,46 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
 
-    final assistantResult = await _assistantService.handle(input);
+    final result = _commandProcessor.process(input);
     if (!mounted) return;
 
-    if (assistantResult.intent == AssistantIntent.createReminder &&
-        assistantResult.reminderDraft != null) {
-      await _confirmVoiceReminder(assistantResult.reminderDraft!);
-      return;
-    }
-
-    if (assistantResult.intent == AssistantIntent.reminderQuery &&
-        assistantResult.reminderQueryType != null) {
-      await _answerReminderQuery(assistantResult.reminderQueryType!);
-      return;
-    }
-
-    if (assistantResult.intent == AssistantIntent.internetQuery &&
-        assistantResult.answer != null) {
-      await _respondFromAssistant(assistantResult.answer!);
-      return;
-    }
-
-    final result = await _voiceProcessor.parseAsync(input);
-    if (!mounted) return;
-
-    if (result.type == VoiceIntentType.addReminder) {
-      Navigator.pushNamed(
-        context,
-        AppRoutes.addReminderScreen,
-        arguments: {
-          'prefillTitle': result.task,
-          'prefillTime': _timeOfDayFromVoiceTime(result.time),
-        },
-      );
-      return;
-    }
-
-    if (result.type == VoiceIntentType.callEmergency) {
-      final phone = _emergencyContacts.first.phone;
-      final launched = await _emergencyRouteProcessor.call(phone);
-      if (!mounted) return;
-      _showSnack(
-        launched
-            ? tr(
-                LanguageController.isTagalog.value,
-                'Opening emergency dialer...',
-                'Binubuksan ang emergency dialer...',
-              )
-            : tr(
-                LanguageController.isTagalog.value,
-                'Unable to open emergency dialer.',
-                'Hindi mabuksan ang emergency dialer.',
-              ),
-      );
-      return;
-    }
-
-    if (result.type == VoiceIntentType.translate) {
-      await _showTranslationDialog(result.task.isEmpty ? input : result.task);
-      return;
-    }
-
-    if (result.type == VoiceIntentType.summarize) {
-      _showSnack(result.summary);
-      return;
+    switch (result.intent) {
+      case VoiceCommandIntent.createReminder:
+        final draft = result.reminderDraft;
+        if (draft == null) break;
+        _lastVoiceReminderDraft = draft;
+        await _confirmVoiceReminder(draft);
+        return;
+      case VoiceCommandIntent.reminderList:
+        unawaited(
+          Navigator.pushNamed(context, AppRoutes.allRemindersScreen).then((_) {
+            if (!mounted) return;
+            _loadReminders(showLoading: false);
+          }),
+        );
+        await _answerReminderQuery(
+          result.reminderQueryType ?? ReminderQueryType.pendingCount,
+        );
+        return;
+      case VoiceCommandIntent.dailySchedule:
+        await _readTodaySchedule();
+        return;
+      case VoiceCommandIntent.emergency:
+        await _openEmergencyAction();
+        return;
+      case VoiceCommandIntent.navigation:
+        _navigateFromVoice(result.navigationTarget);
+        return;
+      case VoiceCommandIntent.statistics:
+        await _showStatisticsSummary();
+        return;
+      case VoiceCommandIntent.internet:
+        await _respondFromAssistant(
+          await _assistantService.answerOnline(input),
+        );
+        return;
+      case VoiceCommandIntent.unknown:
+        break;
     }
 
     _showSnack(
@@ -593,6 +634,55 @@ class _HomeScreenState extends State<HomeScreen>
         'Hindi nakilala ang utos. Subukan: "magdagdag ng paalala uminom ng gamot 8 AM".',
       ),
     );
+  }
+
+  Future<void> _openEmergencyAction() async {
+    final phone = _emergencyContacts.first.phone;
+    final launched = await _emergencyRouteProcessor.call(phone);
+    if (!mounted) return;
+    _showSnack(
+      launched
+          ? tr(
+              LanguageController.isTagalog.value,
+              'Opening emergency dialer...',
+              'Binubuksan ang emergency dialer...',
+            )
+          : tr(
+              LanguageController.isTagalog.value,
+              'Unable to open emergency dialer.',
+              'Hindi mabuksan ang emergency dialer.',
+            ),
+    );
+  }
+
+  void _navigateFromVoice(VoiceNavigationTarget? target) {
+    if (!mounted || target == null) return;
+    switch (target) {
+      case VoiceNavigationTarget.home:
+      case VoiceNavigationTarget.dashboard:
+        _showSnack(
+          tr(
+            LanguageController.isTagalog.value,
+            'Dashboard is already open.',
+            'Bukas na ang dashboard.',
+          ),
+        );
+      case VoiceNavigationTarget.reminders:
+        Navigator.pushNamed(context, AppRoutes.allRemindersScreen).then((_) {
+          if (!mounted) return;
+          _loadReminders(showLoading: false);
+        });
+      case VoiceNavigationTarget.settings:
+        Navigator.pushNamed(context, AppRoutes.settingsScreen);
+      case VoiceNavigationTarget.voiceAssistant:
+        _showSnack(
+          tr(
+            LanguageController.isTagalog.value,
+            'Voice assistant is ready.',
+            'Handa na ang voice assistant.',
+          ),
+        );
+    }
   }
 
   void _onNavTap(int index) {
@@ -627,67 +717,412 @@ class _HomeScreenState extends State<HomeScreen>
     await _respondFromAssistant(_insightsService.spokenSchedule(_reminders));
   }
 
+  Future<void> _showStatisticsSummary() async {
+    final isTagalog = LanguageController.isTagalog.value;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final pending = _reminders
+        .where(
+          (r) =>
+              !r.isCompleted &&
+              !r.isCompletedToday &&
+              !r.isCanceled &&
+              !r.isSkippedToday &&
+              !r.isMissedToday &&
+              r.scheduledTimeMillis >= now,
+        )
+        .length;
+    final completed = _reminders.where((r) => r.isCompletedToday).length;
+    final missed = _reminders
+        .where(
+          (r) =>
+              r.isMissedToday ||
+              (!r.isCompleted && !r.isCanceled && r.scheduledTimeMillis < now),
+        )
+        .length;
+    final total = pending + completed + missed;
+    final completionRate = total == 0 ? 0 : ((completed / total) * 100).round();
+
+    await _respondFromAssistant(
+      tr(
+        isTagalog,
+        'Today you have $pending pending reminders, $completed completed reminders, and $missed missed reminders. Your completion rate is $completionRate percent.',
+        'Ngayon, mayroon kang $pending na pending na paalala, $completed na natapos, at $missed na nalagpasan. Ang completion rate mo ay $completionRate percent.',
+      ),
+    );
+  }
+
   bool _isReminderCreationWakePhrase(String input) {
     final normalized = input.trim().toLowerCase();
     return normalized == 'add reminder' ||
         normalized == 'add a reminder' ||
+        normalized == 'paalala' ||
         normalized == 'magdagdag ng paalala';
   }
 
   Future<void> _listenForReminderDetails() async {
     final isTagalog = LanguageController.isTagalog.value;
-    await _speechModule.speak(
+    final title = await _listenForGuidedReminderAnswer(
       tr(
         isTagalog,
-        'What should I remind you about?',
-        'Ano ang gusto mong ipaalala?',
+        'What would you like me to remind you about?',
+        'Ano ang gusto mong ipaalala ko?',
       ),
     );
-    final details = await _speechModule.listenOnce(
-      listenFor: const Duration(seconds: 8),
-      onLiveText: (text) {
-        if (!mounted) return;
-        setState(() {
-          _isListening = true;
-          _liveTranscript = text;
-        });
-      },
+    if (title == null || title.trim().isEmpty) {
+      await _guidedReminderFailed();
+      return;
+    }
+
+    String note = '';
+    final noteCommand = await _listenForGuidedReminderAnswer(
+      tr(
+        isTagalog,
+        'Say Note to add a note, or say Set Time to continue.',
+        'Sabihin ang Tala para magdagdag ng tala, o Itakda ang Oras para magpatuloy.',
+      ),
     );
-    if (details == null || details.trim().isEmpty) {
-      if (_voiceListenCancelled) return;
+    if (_isNoteKeyword(noteCommand ?? '')) {
+      note =
+          await _listenForGuidedReminderAnswer(
+            tr(isTagalog, 'Please tell me the note.', 'Pakisabi ang tala.'),
+          ) ??
+          '';
+    }
+
+    final timeText = await _collectGuidedReminderTime(noteCommand);
+    if (timeText == null || timeText.trim().isEmpty) {
+      await _guidedReminderFailed();
+      return;
+    }
+    final time = _timeFromGuidedSpeech(timeText);
+    if (time == null) {
       await _respondFromAssistant(
         tr(
           isTagalog,
-          'I did not hear the reminder details. Please try again.',
-          'Hindi ko narinig ang detalye ng paalala. Subukan muli.',
+          'I could not understand the time. Please try again.',
+          'Hindi ko naintindihan ang oras. Subukan muli.',
         ),
       );
       return;
     }
 
-    if (mounted) {
-      setState(() {
-        _isListening = false;
-        _isProcessingVoice = true;
-        _liveTranscript = details;
-      });
-    }
-    final draft = _assistantService.parseReminder('Add Reminder $details');
-    if (draft == null) {
-      await _respondFromAssistant(
-        tr(
-          isTagalog,
-          'I could not understand the reminder. Try saying: Take medicine at 10 AM every day.',
-          'Hindi ko naintindihan ang paalala. Subukan: Uminom ng gamot 10 AM araw-araw.',
-        ),
-      );
+    final frequencyCommand = await _listenForGuidedReminderAnswer(
+      tr(
+        isTagalog,
+        'Say Frequency to continue.',
+        'Sabihin ang Dalas para magpatuloy.',
+      ),
+    );
+    if (frequencyCommand == null || frequencyCommand.trim().isEmpty) {
+      await _guidedReminderFailed();
       return;
     }
 
+    var frequencyText = frequencyCommand;
+    if (_isFrequencyKeyword(frequencyCommand)) {
+      frequencyText =
+          await _listenForGuidedReminderAnswer(
+            tr(
+              isTagalog,
+              'How often should LifeEase remind you?',
+              'Gaano kadalas ka dapat paalalahanan ng LifeEase?',
+            ),
+          ) ??
+          '';
+    }
+    if (frequencyText.trim().isEmpty) {
+      await _guidedReminderFailed();
+      return;
+    }
+
+    var frequency = _frequencyFromGuidedSpeech(frequencyText);
+    if (_isCustomKeyword(frequencyText)) {
+      final customText =
+          await _listenForGuidedReminderAnswer(
+            tr(
+              isTagalog,
+              'Choose your custom interval.',
+              'Pumili ng custom na pagitan ng oras.',
+            ),
+          ) ??
+          '';
+      if (customText.trim().isEmpty) {
+        await _guidedReminderFailed();
+        return;
+      }
+      frequencyText = customText;
+      frequency = _frequencyFromGuidedSpeech(customText);
+    }
+
+    final now = DateTime.now();
+    var scheduledAt = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      time.hour,
+      time.minute,
+    );
+    if (!scheduledAt.isAfter(now)) {
+      scheduledAt = scheduledAt.add(const Duration(days: 1));
+    }
+
+    final draft = VoiceReminderDraft(
+      title: _capitalizeGuidedTitle(title),
+      note: note.trim(),
+      scheduledAt: scheduledAt,
+      repeatType: frequency.repeatType,
+      repeatIntervalMinutes: frequency.repeatIntervalMinutes,
+      frequencyLabel: frequency.label,
+      originalText:
+          'Guided reminder: title=$title note=$note time=$timeText frequency=$frequencyText',
+    );
+
+    await _speakGuidedReminderSummary(draft);
     await _confirmVoiceReminder(draft);
   }
 
+  Future<String?> _collectGuidedReminderTime(String? previousAnswer) async {
+    if (_timeFromGuidedSpeech(previousAnswer ?? '') != null) {
+      return previousAnswer;
+    }
+    final isTagalog = LanguageController.isTagalog.value;
+    if (_isSetTimeKeyword(previousAnswer ?? '')) {
+      return _listenForGuidedReminderAnswer(
+        tr(
+          isTagalog,
+          'What time should I remind you?',
+          'Anong oras kita paaalalahanan?',
+        ),
+      );
+    }
+
+    final setTimeCommand = await _listenForGuidedReminderAnswer(
+      tr(
+        isTagalog,
+        'Say Set Time to continue.',
+        'Sabihin ang Itakda ang Oras para magpatuloy.',
+      ),
+    );
+    if (_timeFromGuidedSpeech(setTimeCommand ?? '') != null) {
+      return setTimeCommand;
+    }
+    if (_isSetTimeKeyword(setTimeCommand ?? '')) {
+      return _listenForGuidedReminderAnswer(
+        tr(
+          isTagalog,
+          'What time should I remind you?',
+          'Anong oras kita paaalalahanan?',
+        ),
+      );
+    }
+    return _listenForGuidedReminderAnswer(
+      tr(
+        isTagalog,
+        'What time should I remind you?',
+        'Anong oras kita paaalalahanan?',
+      ),
+    );
+  }
+
+  Future<String?> _listenForGuidedReminderAnswer(String prompt) async {
+    await _speechModule.speak(prompt);
+    if (!mounted) return null;
+    setState(() {
+      _isListening = true;
+      _isProcessingVoice = false;
+      _voiceStatus = tr(
+        LanguageController.isTagalog.value,
+        'Listening...',
+        'Nakikinig...',
+      );
+      _liveTranscript = '';
+    });
+
+    final answer = await _speechModule.listenOnce(
+      listenFor: const Duration(seconds: 8),
+      onLiveText: (text) {
+        if (!mounted) return;
+        setState(() => _liveTranscript = text);
+      },
+    );
+
+    if (!mounted) return answer;
+    setState(() {
+      _isListening = false;
+      _isProcessingVoice = true;
+      _voiceStatus = '';
+      _liveTranscript = answer?.trim() ?? _liveTranscript;
+    });
+    return answer?.trim();
+  }
+
+  Future<void> _guidedReminderFailed() async {
+    if (_voiceListenCancelled) return;
+    await _respondFromAssistant(
+      tr(
+        LanguageController.isTagalog.value,
+        'I did not hear the reminder details. Please try again.',
+        'Hindi ko narinig ang detalye ng paalala. Subukan muli.',
+      ),
+    );
+  }
+
+  TimeOfDay? _timeFromGuidedSpeech(String value) {
+    final match = RegExp(
+      r'\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b',
+      caseSensitive: false,
+    ).firstMatch(value);
+    if (match == null) return null;
+    var hour = int.tryParse(match.group(1) ?? '') ?? 0;
+    final minute = int.tryParse(match.group(2) ?? '0') ?? 0;
+    final suffix = (match.group(3) ?? '').toLowerCase();
+    if (suffix == 'pm' && hour < 12) hour += 12;
+    if (suffix == 'am' && hour == 12) hour = 0;
+    return TimeOfDay(hour: hour.clamp(0, 23), minute: minute.clamp(0, 59));
+  }
+
+  _GuidedFrequency _frequencyFromGuidedSpeech(String value) {
+    final normalized = value.trim().toLowerCase();
+    final isTagalog = LanguageController.isTagalog.value;
+    final customMatch = RegExp(
+      r'\b(?:every|kada)\s+(\d{1,2})\s+(?:hour|hours|oras)\b',
+    ).firstMatch(normalized);
+    if (customMatch != null) {
+      final hours = (int.tryParse(customMatch.group(1) ?? '') ?? 1).clamp(
+        1,
+        10,
+      );
+      return _GuidedFrequency(
+        'custom:${hours * 60}',
+        hours * 60,
+        isTagalog
+            ? 'Kada $hours oras'
+            : 'Every $hours ${hours == 1 ? 'hour' : 'hours'}',
+      );
+    }
+    if (_containsAny(normalized, const ['one time only', 'isang beses lamang'])) {
+      return _GuidedFrequency(
+        'none',
+        0,
+        isTagalog ? 'Isang beses lamang' : 'One time only',
+      );
+    }
+    if (_containsAny(normalized, const ['araw-araw', 'every day', 'daily'])) {
+      return _GuidedFrequency(
+        'daily',
+        1440,
+        isTagalog ? 'Araw-araw' : 'Every day',
+      );
+    }
+    if (_containsAny(normalized, const [
+      'umaga at gabi',
+      'morning and evening',
+    ])) {
+      return _GuidedFrequency(
+        'custom:720',
+        720,
+        isTagalog ? 'Umaga at gabi' : 'Morning and evening',
+      );
+    }
+    if (_containsAny(normalized, const [
+      'linggo-linggo',
+      'every week',
+      'weekly',
+    ])) {
+      return _GuidedFrequency(
+        'weekly',
+        10080,
+        isTagalog ? 'Linggo-linggo' : 'Every week',
+      );
+    }
+    if (_containsAny(normalized, const [
+      'twice a week',
+      'dalawang beses kada linggo',
+    ])) {
+      return _GuidedFrequency(
+        'custom:5040',
+        5040,
+        isTagalog ? 'Dalawang beses kada linggo' : 'Twice a week',
+      );
+    }
+    if (_containsAny(normalized, const [
+      'buwan-buwan',
+      'every month',
+      'monthly',
+    ])) {
+      return _GuidedFrequency(
+        'monthly',
+        43200,
+        isTagalog ? 'Buwan-buwan' : 'Every month',
+      );
+    }
+    if (_containsAny(normalized, const [
+      'twice a month',
+      'dalawang beses kada buwan',
+    ])) {
+      return _GuidedFrequency(
+        'twice_monthly',
+        21600,
+        isTagalog ? 'Dalawang beses kada buwan' : 'Twice a month',
+      );
+    }
+    return _GuidedFrequency(
+      'none',
+      0,
+      isTagalog ? 'Isang beses lamang' : 'One time only',
+    );
+  }
+
+  bool _isNoteKeyword(String value) {
+    final normalized = value.trim().toLowerCase();
+    return normalized == 'note' ||
+        normalized == 'notes' ||
+        normalized == 'tala' ||
+        normalized.contains('note') ||
+        normalized.contains('tala') ||
+        normalized.contains('add note') ||
+        normalized.contains('magdagdag ng tala');
+  }
+
+  bool _isSetTimeKeyword(String value) {
+    final normalized = value.trim().toLowerCase();
+    return normalized.contains('set time') ||
+        normalized.contains('itakda ang oras') ||
+        normalized.contains('oras');
+  }
+
+  bool _isFrequencyKeyword(String value) {
+    final normalized = value.trim().toLowerCase();
+    return normalized.contains('frequency') || normalized.contains('dalas');
+  }
+
+  bool _isCustomKeyword(String value) {
+    final normalized = value.trim().toLowerCase();
+    return normalized.contains('custom');
+  }
+
+  bool _containsAny(String value, List<String> phrases) {
+    return phrases.any(value.contains);
+  }
+
+  String _capitalizeGuidedTitle(String value) {
+    final title = value.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (title.isEmpty) return title;
+    return title[0].toUpperCase() + title.substring(1);
+  }
+
+  Future<void> _speakGuidedReminderSummary(VoiceReminderDraft draft) async {
+    final isTagalog = LanguageController.isTagalog.value;
+    final summary = tr(
+      isTagalog,
+      'Reminder summary.\nTitle: ${draft.title}\nNote: ${draft.note.isEmpty ? 'None' : draft.note}\nTime: ${DateFormat('h:mm a').format(draft.scheduledAt)}\nFrequency: ${draft.frequencyLabel}\nWould you like to save this reminder?',
+      'Buod ng paalala.\nPamagat: ${draft.title}\nTala: ${draft.note.isEmpty ? 'Wala' : draft.note}\nOras: ${DateFormat('h:mm a').format(draft.scheduledAt)}\nDalas: ${draft.frequencyLabel}\nGusto mo bang i-save ang paalalang ito?',
+    );
+    await _speechModule.speak(summary);
+  }
+
   Future<void> _confirmVoiceReminder(VoiceReminderDraft draft) async {
+    _lastVoiceReminderDraft = draft;
     final isTagalog = LanguageController.isTagalog.value;
     final action = await Navigator.push<String>(
       context,
@@ -1014,22 +1449,6 @@ class _HomeScreenState extends State<HomeScreen>
         '${hex.substring(20)}';
   }
 
-  TimeOfDay? _timeOfDayFromVoiceTime(String? value) {
-    if (value == null || value.trim().isEmpty) return null;
-    final match = RegExp(
-      r'^(\d{1,2}):(\d{2})\s*(AM|PM)$',
-      caseSensitive: false,
-    ).firstMatch(value.trim());
-    if (match == null) return null;
-
-    var hour = int.tryParse(match.group(1) ?? '') ?? 0;
-    final minute = int.tryParse(match.group(2) ?? '') ?? 0;
-    final suffix = (match.group(3) ?? '').toUpperCase();
-    if (suffix == 'PM' && hour < 12) hour += 12;
-    if (suffix == 'AM' && hour == 12) hour = 0;
-    return TimeOfDay(hour: hour, minute: minute);
-  }
-
   Future<void> _showTranslationDialog(String initialText) async {
     final controller = TextEditingController(text: initialText);
     var translatedText = '';
@@ -1119,6 +1538,18 @@ class _HomeScreenState extends State<HomeScreen>
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _onVoiceResultTap() async {
+    if (_isListening || _isProcessingVoice) return;
+    final draft = _lastVoiceReminderDraft;
+    if (draft != null) {
+      await _confirmVoiceReminder(draft);
+      return;
+    }
+    if (_enableVoiceCommandParsing && _liveTranscript.trim().isNotEmpty) {
+      await _handleCommandText(_liveTranscript);
+    }
   }
 
   @override
@@ -1298,50 +1729,57 @@ class _HomeScreenState extends State<HomeScreen>
       return const SizedBox.shrink();
     }
 
-    final title = _isListening
-        ? tr(isTagalog, 'Listening...', 'Nakikinig...')
+    final title =
+        (_isListening || _isProcessingVoice) && _voiceStatus.isNotEmpty
+        ? _voiceStatus
+        : _isListening
+        ? tr(isTagalog, 'Recording...', 'Nagre-record...')
         : _isProcessingVoice
-        ? tr(isTagalog, 'Processing...', 'Pinoproseso...')
+        ? tr(isTagalog, 'Transcribing...', 'Isinasalin sa text...')
         : tr(isTagalog, 'Voice Result', 'Resulta ng Boses');
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.primaryContainer.withAlpha(120),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(
-              _isListening ? Icons.graphic_eq : Icons.mic,
-              color: theme.colorScheme.primary,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: GoogleFonts.nunitoSans(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  if (_liveTranscript.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      _liveTranscript,
-                      style: GoogleFonts.nunitoSans(fontSize: 14),
-                    ),
-                  ],
-                ],
+      child: InkWell(
+        onTap: _liveTranscript.isEmpty ? null : _onVoiceResultTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.primaryContainer.withAlpha(120),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                _isListening ? Icons.graphic_eq : Icons.mic,
+                color: theme.colorScheme.primary,
               ),
-            ),
-          ],
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: GoogleFonts.nunitoSans(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (_liveTranscript.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        _liveTranscript,
+                        style: GoogleFonts.nunitoSans(fontSize: 14),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

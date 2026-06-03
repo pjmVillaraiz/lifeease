@@ -268,6 +268,7 @@ class _HomeScreenState extends State<HomeScreen>
   List<ReminderModel> _reminders = [];
   bool _isListening = false;
   bool _isProcessingVoice = false;
+  bool _isGuidedListening = false;
   bool _voiceListenCancelled = false;
   String _liveTranscript = '';
   String _voiceStatus = '';
@@ -962,6 +963,40 @@ class _HomeScreenState extends State<HomeScreen>
       if (_voiceListenCancelled) return;
       if (answer == null || answer.trim().isEmpty) continue;
 
+      // Try to extract time directly from answer first
+      final extractedTime = _timeFromGuidedSpeech(answer);
+      if (extractedTime != null) {
+        // Convert 24-hour format to 12-hour format with AM/PM
+        var displayHour = extractedTime.hour;
+        var ampm = 'AM';
+        
+        if (displayHour == 0) {
+          displayHour = 12; // Midnight
+          ampm = 'AM';
+        } else if (displayHour < 12) {
+          ampm = 'AM';
+        } else if (displayHour == 12) {
+          ampm = 'PM'; // Noon
+        } else {
+          displayHour = displayHour - 12; // Afternoon/Evening
+          ampm = 'PM';
+        }
+        
+        final timeStr = '${displayHour}:${extractedTime.minute.toString().padLeft(2, '0')} $ampm';
+        final completedText = '$input at $timeStr';
+        final completed = _commandProcessor.process(completedText);
+        final draft = completed.reminderDraft;
+        if (completed.intent == VoiceCommandIntent.createReminder &&
+            draft != null &&
+            completed.reminderHasExplicitTime) {
+          _lastVoiceReminderDraft = draft;
+          await _confirmVoiceReminder(draft);
+          return;
+        }
+      }
+
+      // Fallback: try the original way with the answer as-is
+      // This should handle natural sentence variations
       final completedText = '$input at $answer';
       final completed = _commandProcessor.process(completedText);
       final draft = completed.reminderDraft;
@@ -1303,6 +1338,7 @@ class _HomeScreenState extends State<HomeScreen>
     await _speechModule.speak(prompt);
     if (!mounted) return null;
     setState(() {
+      _isGuidedListening = true;
       _isListening = true;
       _isProcessingVoice = false;
       _voiceStatus = tr(
@@ -1324,6 +1360,7 @@ class _HomeScreenState extends State<HomeScreen>
 
     if (!mounted) return cleanAnswer;
     setState(() {
+      _isGuidedListening = false;
       _isListening = false;
       _isProcessingVoice = true;
       _voiceStatus = '';
@@ -1373,27 +1410,159 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _guidedReminderFailed() async {
     if (_voiceListenCancelled) return;
+    
+    // Reset all voice and reminder state
+    if (mounted) {
+      setState(() {
+        _isListening = false;
+        _isProcessingVoice = false;
+        _isGuidedListening = false;
+        _voiceListenCancelled = true;
+        _liveTranscript = '';
+        _voiceStatus = '';
+        _lastVoiceReminderDraft = null;
+      });
+    }
+    
     await _respondFromAssistant(
       tr(
         LanguageController.isTagalog.value,
-        'I did not hear the reminder details. Please try again.',
-        'Hindi ko narinig ang detalye ng paalala. Subukan muli.',
+        'I did not hear the reminder details. Please press the microphone button and try again.',
+        'Hindi ko narinig ang detalye ng paalala. I-tap muli ang microphone button at subukan ulit.',
       ),
     );
+    
+    if (mounted) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          setState(() => _voiceListenCancelled = false);
+        }
+      });
+    }
   }
 
   TimeOfDay? _timeFromGuidedSpeech(String value) {
-    final match = RegExp(
-      r'\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b',
+    if (value.isEmpty) return null;
+    
+    final normalized = _normalizeSpokenNumbers(value.trim().toLowerCase());
+    
+    // Try increasingly flexible patterns for time matching
+    // All patterns use case-insensitive matching to handle "pm", "PM", "Pm", etc.
+    
+    // Pattern 1: Hour:Minute with AM/PM in any format/case
+    // Matches: "10:30 pm", "10:30pm", "10 : 30 pm", "03:31 AM", "3:5 AM", etc.
+    var match = RegExp(
+      r'(\d{1,2})\s*[:.]?\s*(\d{1,2})\s*[:.\s]?\s*(am|pm|a\.m\.?|p\.m\.?)',
       caseSensitive: false,
-    ).firstMatch(value);
-    if (match == null) return null;
-    var hour = int.tryParse(match.group(1) ?? '') ?? 0;
-    final minute = int.tryParse(match.group(2) ?? '0') ?? 0;
-    final suffix = (match.group(3) ?? '').toLowerCase();
-    if (suffix == 'pm' && hour < 12) hour += 12;
-    if (suffix == 'am' && hour == 12) hour = 0;
-    return TimeOfDay(hour: hour.clamp(0, 23), minute: minute.clamp(0, 59));
+    ).firstMatch(normalized);
+    
+    if (match != null) {
+      var hour = int.tryParse(match.group(1) ?? '') ?? 0;
+      var minute = int.tryParse(match.group(2) ?? '0') ?? 0;
+      final suffix = (match.group(3) ?? '').toLowerCase().replaceAll(RegExp(r'\.'), '').trim();
+      
+      // Validate ranges
+      if (hour < 1 || hour > 12 || minute > 59) return null;
+      
+      // Pad minute to 2 digits if needed
+      if (minute < 10) minute = minute; // Already a single digit, leave as is
+      
+      if (suffix.startsWith('p') && hour < 12) hour += 12;
+      if (suffix.startsWith('a') && hour == 12) hour = 0;
+      
+      return TimeOfDay(hour: hour.clamp(0, 23), minute: minute.clamp(0, 59));
+    }
+
+    // Pattern 2: Hour with AM/PM (no minutes) in any format/case
+    // Matches: "10 pm", "10pm", "10  p m", "3 AM", "12am", "1 p.m.", etc.
+    match = RegExp(
+      r'(\d{1,2})\s*(?:o?clock)?\s*[:.\s]?\s*(am|pm|a\.m\.?|p\.m\.?)',
+      caseSensitive: false,
+    ).firstMatch(normalized);
+    
+    if (match != null) {
+      var hour = int.tryParse(match.group(1) ?? '') ?? 0;
+      final suffix = (match.group(2) ?? '').toLowerCase().replaceAll(RegExp(r'\.'), '').trim();
+      
+      if (hour < 1 || hour > 12) return null;
+      
+      if (suffix.startsWith('p') && hour < 12) hour += 12;
+      if (suffix.startsWith('a') && hour == 12) hour = 0;
+      
+      return TimeOfDay(hour: hour.clamp(0, 23), minute: 0);
+    }
+
+    // Pattern 3: Standalone AM/PM after hour (handles variable spacing better)
+    // This catches cases where regex 2 might miss due to spacing
+    // Matches things like "10 to 11 pm", "around 3 am", etc.
+    match = RegExp(
+      r'(\d{1,2})\s*(?:o?clock)?\D{0,10}(am|pm)',
+      caseSensitive: false,
+    ).firstMatch(normalized);
+    
+    if (match != null) {
+      var hour = int.tryParse(match.group(1) ?? '') ?? 0;
+      final suffix = (match.group(2) ?? '').toLowerCase();
+      
+      if (hour < 1 || hour > 12) return null;
+      
+      if (suffix == 'pm' && hour < 12) hour += 12;
+      if (suffix == 'am' && hour == 12) hour = 0;
+      
+      return TimeOfDay(hour: hour.clamp(0, 23), minute: 0);
+    }
+
+    // Pattern 4: 24-hour format fallback (15:30, 23:45) - convert to 12-hour
+    match = RegExp(
+      r'(\d{1,2})\s*[:.]?\s*(\d{1,2})',
+    ).firstMatch(normalized);
+    
+    if (match != null) {
+      var hour = int.tryParse(match.group(1) ?? '') ?? 0;
+      final minute = int.tryParse(match.group(2) ?? '0') ?? 0;
+      
+      if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+        // Accept 24-hour format as fallback only if it looks valid
+        if (hour > 12 || (hour == 0 && minute == 0)) {
+          // Looks like 24-hour format (e.g., 15:30, 23:45, 00:00)
+          return TimeOfDay(hour: hour, minute: minute);
+        }
+      }
+    }
+    
+    return null;
+  }
+
+  String _normalizeSpokenNumbers(String text) {
+    var result = text;
+    
+    // Map of spoken numbers to digits - sorted by length (longest first) to avoid conflicts
+    const numberMap = {
+      'twenty-three': '23', 'twenty-two': '22', 'twenty-one': '21',
+      'twenty': '20', 'nineteen': '19', 'eighteen': '18', 'seventeen': '17',
+      'sixteen': '16', 'fifteen': '15', 'fourteen': '14', 'thirteen': '13',
+      'twelve': '12', 'eleven': '11', 'ten': '10', 'nine': '9', 'eight': '8',
+      'seven': '7', 'six': '6', 'five': '5', 'four': '4', 'three': '3',
+      'two': '2', 'one': '1', 'zero': '0',
+      'thirty': '30', 'forty': '40', 'fifty': '50',
+      'o clock': ':00', 'oclock': ':00',
+    };
+    
+    // Sort keys by length (longest first) to match longer phrases before shorter ones
+    final sortedKeys = numberMap.keys.toList()
+      ..sort((a, b) => b.length.compareTo(a.length));
+    
+    for (final word in sortedKeys) {
+      result = result.replaceAll(
+        RegExp(r'\b' + RegExp.escape(word) + r'\b', caseSensitive: false),
+        numberMap[word]!,
+      );
+    }
+    
+    // Clean up any repeated spaces
+    result = result.replaceAll(RegExp(r'\s+'), ' ');
+    
+    return result;
   }
 
   _GuidedFrequency _frequencyFromGuidedSpeech(String value) {
@@ -2127,82 +2296,23 @@ class _HomeScreenState extends State<HomeScreen>
               ],
             ),
           ),
-          _buildVoiceButton(theme, isTagalog),
         ],
       ),
     );
   }
 
-  Widget _buildVoiceButton(ThemeData theme, bool isTagalog) {
+  Widget _buildVoiceStatusPanel(ThemeData theme, bool isTagalog) {
     final active = _isListening || _isProcessingVoice;
+    final disabled = _isGuidedListening;
     final color = _isListening
         ? AppTheme.errorRed
         : _isProcessingVoice
         ? AppTheme.warning
         : theme.colorScheme.primary;
 
-    return Tooltip(
-      message: tr(isTagalog, 'Voice Assistant', 'Voice Assistant'),
-      child: InkWell(
-        onTap: _isProcessingVoice 
-            ? null 
-            : _isListening 
-            ? _stopVoiceRecordingAndTranscribe 
-            : _onSpeakCommand,
-        borderRadius: BorderRadius.circular(32),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          width: 58,
-          height: 58,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: color.withAlpha(active ? 35 : 20),
-            border: Border.all(color: color, width: active ? 3 : 2),
-            boxShadow: active
-                ? [
-                    BoxShadow(
-                      color: color.withAlpha(90),
-                      blurRadius: _isListening ? 18 : 8,
-                      spreadRadius: _isListening ? 4 : 1,
-                    ),
-                  ]
-                : null,
-          ),
-          child: _isProcessingVoice
-              ? Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: CircularProgressIndicator(
-                    strokeWidth: 3,
-                    color: color,
-                  ),
-                )
-              : Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    if (_isListening) ...[
-                      Icon(Icons.graphic_eq, color: color.withAlpha(120)),
-                      TweenAnimationBuilder<double>(
-                        tween: Tween(begin: 0.82, end: 1.16),
-                        duration: const Duration(milliseconds: 650),
-                        builder: (context, scale, child) {
-                          return Transform.scale(scale: scale, child: child);
-                        },
-                        onEnd: () {
-                          if (mounted && _isListening) setState(() {});
-                        },
-                        child: Icon(Icons.mic, color: color, size: 30),
-                      ),
-                    ] else
-                      Icon(Icons.mic, color: color, size: 28),
-                  ],
-                ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildVoiceStatusPanel(ThemeData theme, bool isTagalog) {
-    if (!_isListening && !_isProcessingVoice && _liveTranscript.isEmpty) {
+    // Always show when active, or show if there's a transcript
+    final showPanel = active || _liveTranscript.isNotEmpty;
+    if (!showPanel) {
       return const SizedBox.shrink();
     }
 
@@ -2214,48 +2324,127 @@ class _HomeScreenState extends State<HomeScreen>
         : _isProcessingVoice
         ? tr(isTagalog, 'Transcribing...', 'Isinasalin sa text...')
         : tr(isTagalog, 'Voice Result', 'Resulta ng Boses');
+    
+    // Determine tap action
+    VoidCallback? onTapAction;
+    if (disabled) {
+      onTapAction = null;
+    } else if (_isProcessingVoice) {
+      onTapAction = null;
+    } else if (_isListening) {
+      onTapAction = _stopVoiceRecordingAndTranscribe;
+    } else if (_liveTranscript.isNotEmpty) {
+      onTapAction = _onVoiceResultTap;
+    } else {
+      onTapAction = _onSpeakCommand;
+    }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-      child: InkWell(
-        onTap: _liveTranscript.isEmpty ? null : _onVoiceResultTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.primaryContainer.withAlpha(120),
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                _isListening ? Icons.graphic_eq : Icons.mic,
-                color: theme.colorScheme.primary,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: GoogleFonts.nunitoSans(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+      child: Tooltip(
+        message: disabled
+            ? tr(isTagalog, 'Answering voice prompt...', 'Sumasagot sa voice prompt...')
+            : tr(isTagalog, 'Voice Assistant - Press to Record', 'Voice Assistant - Pindutin para mag-record'),
+        child: InkWell(
+          onTap: onTapAction,
+          borderRadius: BorderRadius.circular(20),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
+            decoration: BoxDecoration(
+              color: color.withAlpha(active ? 35 : 20),
+              border: Border.all(color: color, width: active ? 3 : 2),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: active
+                  ? [
+                      BoxShadow(
+                        color: color.withAlpha(90),
+                        blurRadius: _isListening ? 20 : 10,
+                        spreadRadius: _isListening ? 3 : 1,
                       ),
-                    ),
-                    if (_liveTranscript.isNotEmpty) ...[
-                      const SizedBox(height: 6),
+                    ]
+                  : null,
+            ),
+            child: _isProcessingVoice
+                ? Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: 28,
+                        height: 28,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 3,
+                          color: color,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
                       Text(
-                        _liveTranscript,
-                        style: GoogleFonts.nunitoSans(fontSize: 14),
+                        title,
+                        style: GoogleFonts.nunitoSans(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          color: theme.colorScheme.onSurface,
+                        ),
                       ),
                     ],
-                  ],
-                ),
-              ),
-            ],
+                  )
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              title,
+                              style: GoogleFonts.nunitoSans(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
+                                color: theme.colorScheme.onSurface,
+                              ),
+                            ),
+                            if (_liveTranscript.isNotEmpty) ...[
+                              const SizedBox(height: 10),
+                              Text(
+                                _liveTranscript,
+                                style: GoogleFonts.nunitoSans(
+                                  fontSize: 16,
+                                  color: theme.colorScheme.onSurface,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      _isListening
+                          ? SizedBox(
+                              width: 64,
+                              height: 64,
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  Icon(Icons.graphic_eq, color: color.withAlpha(120), size: 32),
+                                  TweenAnimationBuilder<double>(
+                                    tween: Tween(begin: 0.82, end: 1.16),
+                                    duration: const Duration(milliseconds: 650),
+                                    builder: (context, scale, child) {
+                                      return Transform.scale(scale: scale, child: child);
+                                    },
+                                    onEnd: () {
+                                      if (mounted && _isListening) setState(() {});
+                                    },
+                                    child: Icon(Icons.mic, color: color, size: 48),
+                                  ),
+                                ],
+                              ),
+                            )
+                          : Icon(Icons.mic, color: color, size: 56),
+                    ],
+                  ),
           ),
         ),
       ),

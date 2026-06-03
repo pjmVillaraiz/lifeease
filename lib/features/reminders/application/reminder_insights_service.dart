@@ -1,7 +1,7 @@
 import 'package:intl/intl.dart';
 
 import 'package:lifeease/core/services/tts/tts_language_service.dart';
-import 'package:lifeease/features/reminders/presentation/home_screen/home_screen.dart';
+import 'package:lifeease/features/reminders/models/reminder_model.dart';
 
 enum ReminderStatsPeriod { day, week, month }
 

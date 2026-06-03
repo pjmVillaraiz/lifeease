@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:intl/intl.dart';
 
 import 'package:lifeease/core/services/tts/tts_language_service.dart';
+import 'package:lifeease/services/voice/voice_reminder_hints.dart';
+import 'package:lifeease/services/voice/voice_time_parser.dart';
 
 enum AssistantIntent { createReminder, reminderQuery, internetQuery, unknown }
 
@@ -191,22 +193,12 @@ class VoiceAssistantService {
 
   bool _looksLikeReminderTask(String text) {
     return RegExp(
-          r'^\s*(take|drink|use|check|measure|make|book|schedule|uminom|inumin|gamitin|kunin)\b',
+          r'^\s*(take|drink|use|check|measure|make|book|schedule|eat|have|uminom|inumin|gamitin|kunin)\b',
         ).hasMatch(text) ||
-        [
-          'pill',
-          'pills',
-          'medicine',
-          'medication',
-          'meds',
-          'vitamin',
-          'vitamins',
-          'gamot',
-          'tableta',
-          'appointment',
-          'checkup',
-          'check-up',
-        ].any(text.contains);
+        RegExp(
+          r'\b(?:add|create|make|set)\s+(?:a\s+)?(?:food|appointment|medicine|medication|pill|meal|lunch|dinner|breakfast|shopping|calendar|event|doctor)\s+reminder\b',
+        ).hasMatch(text) ||
+        VoiceReminderHints.containsTaskKeyword(text);
   }
 
   ReminderQueryType? _reminderQueryType(String text) {
@@ -256,21 +248,10 @@ class VoiceAssistantService {
 
     var hour = now.add(const Duration(hours: 1)).hour;
     var minute = 0;
-    final timeMatch = RegExp(
-      r'\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b',
-    ).firstMatch(text);
-    if (timeMatch != null) {
-      hour = int.tryParse(timeMatch.group(1) ?? '') ?? hour;
-      minute = int.tryParse(timeMatch.group(2) ?? '0') ?? 0;
-      final suffix = timeMatch.group(3) ?? '';
-      if (suffix == 'pm' && hour < 12) hour += 12;
-      if (suffix == 'am' && hour == 12) hour = 0;
-    } else if (text.contains('morning') || text.contains('umaga')) {
-      hour = 8;
-      minute = 0;
-    } else if (text.contains('evening') || text.contains('gabi')) {
-      hour = 18;
-      minute = 0;
+    final parsedTime = VoiceTimeParser.parse(text);
+    if (parsedTime != null) {
+      hour = parsedTime.hour;
+      minute = parsedTime.minute;
     }
 
     var scheduled = DateTime(date.year, date.month, date.day, hour, minute);
@@ -473,16 +454,9 @@ class VoiceAssistantService {
   }
 
   TimeParts? _extractTimeParts(String text) {
-    final match = RegExp(
-      r'\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b',
-    ).firstMatch(text);
-    if (match == null) return null;
-    var hour = int.tryParse(match.group(1) ?? '') ?? 0;
-    final minute = int.tryParse(match.group(2) ?? '0') ?? 0;
-    final suffix = match.group(3) ?? '';
-    if (suffix == 'pm' && hour < 12) hour += 12;
-    if (suffix == 'am' && hour == 12) hour = 0;
-    return TimeParts(hour.clamp(0, 23), minute.clamp(0, 59));
+    final parsed = VoiceTimeParser.parse(text);
+    if (parsed == null) return null;
+    return TimeParts(parsed.hour, parsed.minute);
   }
 
   int _numberWord(String value) {
@@ -507,7 +481,8 @@ class VoiceAssistantService {
   String _cleanTitle(String text) {
     var title = text;
     final patterns = [
-      r'\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)\b',
+      r'\b(?:at|ng|oras)\s+\d{1,2}(?:[:.]?\s*\d{1,2})?\s*(?:am|pm|a\.m\.?|p\.m\.?)\b',
+      r'\b\d{1,2}(?:[:.]?\s*\d{1,2})?\s*(?:am|pm|a\.m\.?|p\.m\.?)\b',
       r'\btomorrow\b',
       r'\bbukas\b',
       r'\bevery\s+(hour|day|week|month)\b',

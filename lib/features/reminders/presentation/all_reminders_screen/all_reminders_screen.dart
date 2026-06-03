@@ -9,7 +9,7 @@ import 'package:lifeease/core/services/supabase_config.dart';
 import 'package:lifeease/core/services/tts/tts_language_service.dart';
 import 'package:lifeease/core/utils/app_export.dart';
 import 'package:lifeease/features/reminders/presentation/add_reminder_screen/add_reminder_screen.dart';
-import 'package:lifeease/features/reminders/presentation/home_screen/home_screen.dart';
+import 'package:lifeease/features/reminders/models/reminder_model.dart';
 import 'package:lifeease/shared/providers/language_controller.dart';
 import 'package:lifeease/shared/widgets/app_navigation.dart';
 import 'package:lifeease/shared/widgets/empty_state_widget.dart';

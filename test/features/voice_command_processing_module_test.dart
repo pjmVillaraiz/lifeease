@@ -47,5 +47,15 @@ void main() {
       expect(summary.length, lessThanOrEqualTo(90));
       expect(summary, endsWith('...'));
     });
+
+    test('detects Tagalog emergency intent locally', () {
+      final module = VoiceCommandProcessingModule();
+
+      final result = module.parse('Tumawag ng emergency contact');
+
+      expect(result.type, VoiceIntentType.callEmergency);
+      expect(result.usedGemma, isFalse);
+      expect(result.modelUsed, 'gemma-2-lightweight-local-fallback');
+    });
   });
 }

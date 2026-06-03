@@ -108,6 +108,7 @@ class SpeechProcessingModule {
 
   Future<void> cancelListening() async {
     _cancelRequested = true;
+    await _tts.stop();
     if (_speech.isListening) {
       await _speech.cancel();
     }

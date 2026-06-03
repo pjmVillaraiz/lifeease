@@ -1,3 +1,6 @@
+import 'package:lifeease/services/voice/voice_reminder_hints.dart';
+import 'package:lifeease/services/voice/voice_time_parser.dart';
+
 class ParsedReminderDraft {
   const ParsedReminderDraft({
     required this.title,
@@ -93,27 +96,17 @@ class ReminderParser {
           'mag remind',
           'mag-remind',
         ]) ||
+        RegExp(
+          r'\b(?:add|create|make|set)\s+(?:a\s+)?(?:food|appointment|medicine|medication|pill|meal|lunch|dinner|breakfast|shopping|calendar|event|doctor)\s+reminder\b',
+        ).hasMatch(text) ||
         _looksLikeImplicitTask(text);
   }
 
   bool _looksLikeImplicitTask(String text) {
     return RegExp(
-          r'^\s*(take|drink|use|check|measure|make|book|schedule|uminom|inumin|gamitin|kunin)\b',
+          r'^\s*(take|drink|use|check|measure|make|book|schedule|eat|have|uminom|inumin|gamitin|kunin)\b',
         ).hasMatch(text) ||
-        _hasAny(text, const [
-          'pill',
-          'pills',
-          'medicine',
-          'medication',
-          'meds',
-          'vitamin',
-          'vitamins',
-          'gamot',
-          'tableta',
-          'appointment',
-          'checkup',
-          'check-up',
-        ]);
+        VoiceReminderHints.containsTaskKeyword(text);
   }
 
   _DateResult _extractDate(String text, DateTime now) {
@@ -133,17 +126,9 @@ class ReminderParser {
   }
 
   _TimeParts? _extractTime(String text) {
-    final match = RegExp(
-      r'\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b',
-    ).firstMatch(text);
-    if (match == null) return null;
-
-    var hour = int.tryParse(match.group(1) ?? '') ?? 0;
-    final minute = int.tryParse(match.group(2) ?? '0') ?? 0;
-    final suffix = (match.group(3) ?? '').toLowerCase();
-    if (suffix == 'pm' && hour < 12) hour += 12;
-    if (suffix == 'am' && hour == 12) hour = 0;
-    return _TimeParts(hour.clamp(0, 23), minute.clamp(0, 59));
+    final parsed = VoiceTimeParser.parse(text);
+    if (parsed == null) return null;
+    return _TimeParts(parsed.hour, parsed.minute);
   }
 
   _Frequency _extractFrequency(String text) {
@@ -226,12 +211,14 @@ class ReminderParser {
     var title = rawText.trim();
     final cleanupPatterns = [
       r'^\s*(please\s+)?',
+      r'^\s*(?:add|create|make|set)\s+(?:a\s+)?(?:food|appointment|medicine|medication|pill|meal|lunch|dinner|breakfast|shopping|calendar|event|doctor)\s+reminder\s+',
       r'^\s*(remind me to|remind me|add reminder to|add reminder|add a reminder to|add a reminder|create reminder to|create reminder|create a reminder to|create a reminder|make reminder to|make reminder|make a reminder to|make a reminder|set a reminder to|set a reminder|set reminder to|set reminder)\s+',
       r'^\s*(paalalahanan mo ako na|paalalahanan mo ako|paalalahanan ako na|paalalahanan ako|magdagdag ng paalala na|magdagdag ng paalala|paalala ako na|paalala ako|reminder ako na|reminder ako|mag-?\s*remind ako na|mag-?\s*remind ako|mag-?\s*remind)\s+',
       r'\b(?:note|notes|tala)\s+.+$',
       r'\b(?:today|tomorrow|ngayon|bukas)\b',
-      r'\b(?:at|ng|oras)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b',
-      r'\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b',
+      // Flexible time patterns - handles minutes with 1-2 digits, various separators, periods
+      r'\b(?:at|ng|oras)\s+\d{1,2}(?:[:.]?\s*\d{1,2})?\s*(?:am|pm|a\.m\.?|p\.m\.?)\b',
+      r'\b\d{1,2}(?:[:.]?\s*\d{1,2})?\s*(?:am|pm|a\.m\.?|p\.m\.?)\b',
       r'\b(?:every hour|hourly|kada oras)\b',
       r'\b(?:every|kada)\s+\d{1,2}\s+(?:hour|hours|oras)\b',
       r'\b(?:every day|daily|araw-araw)\b',
@@ -246,11 +233,34 @@ class ReminderParser {
       title = title.replaceAll(RegExp(pattern, caseSensitive: false), ' ');
     }
 
+    // Re-run leading phrase strips (add-reminder removal may expose "remind me to").
     title = title
-        .replaceAll(RegExp(r'^\s*(to|na)\s+', caseSensitive: false), '')
+        .replaceAll(
+          RegExp(r'^\s*(remind me to|remind me)\s+', caseSensitive: false),
+          '',
+        )
+        .replaceAll(
+          RegExp(
+            r'^\s*(?:paalalahanan mo ako na|paalalahanan mo ako|paalalahanan ako na|paalalahanan ako)\s+',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .replaceAll(RegExp(r'^\s*(to|na|for)\s+', caseSensitive: false), '')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
+
+    if (title.isEmpty) {
+      return _titleFromCategoryHint(rawText) ?? '';
+    }
     return title;
+  }
+
+  String? _titleFromCategoryHint(String rawText) {
+    final fromHint = VoiceReminderHints.titleFromText(rawText);
+    if (fromHint != null) return fromHint;
+    if (_looksLikeReminder(_normalize(rawText))) return 'Reminder';
+    return null;
   }
 
   bool _hasAny(String text, List<String> phrases) {

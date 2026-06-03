@@ -493,19 +493,58 @@ class _HomeScreenState extends State<HomeScreen>
     unawaited(_showDueReminderPrompt(reminder));
   }
 
+  String _getCategoryLabel(String category, bool isTagalog) {
+    switch (category.toLowerCase()) {
+      case 'health':
+        return isTagalog ? 'Kalusugan' : 'Health';
+      case 'medical':
+        return isTagalog ? 'Medikal' : 'Medical';
+      case 'work':
+        return isTagalog ? 'Trabaho' : 'Work';
+      case 'personal':
+        return isTagalog ? 'Personal' : 'Personal';
+      case 'family':
+        return isTagalog ? 'Pamilya' : 'Family';
+      case 'appointment':
+        return isTagalog ? 'Appointment' : 'Appointment';
+      case 'meeting':
+        return isTagalog ? 'Meeting' : 'Meeting';
+      case 'shopping':
+        return isTagalog ? 'Pamimili' : 'Shopping';
+      case 'exercise':
+        return isTagalog ? 'Ehersisyo' : 'Exercise';
+      case 'medication':
+        return isTagalog ? 'Gamot' : 'Medication';
+      default:
+        return isTagalog ? 'Pangkalahatan' : 'General';
+    }
+  }
+
   Future<void> _showDueReminderPrompt(ReminderModel reminder) async {
     if (!mounted || _isShowingDueReminderPrompt) return;
     _isShowingDueReminderPrompt = true;
     final isTagalog = LanguageController.isTagalog.value;
     try {
+      // Announce the reminder via voice
+      final scheduled = DateTime.fromMillisecondsSinceEpoch(
+        reminder.scheduledTimeMillis,
+      );
+      final timeStr = DateFormat('h:mm a').format(scheduled);
+      final categoryLabel = _getCategoryLabel(reminder.category, isTagalog);
+      
+      final announcement = tr(
+        isTagalog,
+        'Reminder due. Category: ${categoryLabel}. ${reminder.title}. ${reminder.description.isNotEmpty ? reminder.description : 'No additional details'}. Time: $timeStr.',
+        'Paalala na. Kategorya: ${categoryLabel}. ${reminder.title}. ${reminder.description.isNotEmpty ? reminder.description : 'Walang karagdagang detalye'}. Oras: $timeStr.',
+      );
+      unawaited(_speechModule.speak(announcement));
+      
       final action = await showDialog<String>(
         context: context,
         barrierDismissible: false,
+        barrierColor: Colors.black54,
         builder: (ctx) {
           final theme = Theme.of(ctx);
-          final scheduled = DateTime.fromMillisecondsSinceEpoch(
-            reminder.scheduledTimeMillis,
-          );
           return AlertDialog(
             insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
             shape: RoundedRectangleBorder(
@@ -536,6 +575,26 @@ class _HomeScreenState extends State<HomeScreen>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.secondaryContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    categoryLabel,
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.nunitoSans(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.onSecondaryContainer,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
                 Text(
                   reminder.title,
                   textAlign: TextAlign.center,
@@ -575,7 +634,7 @@ class _HomeScreenState extends State<HomeScreen>
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        DateFormat('h:mm a').format(scheduled),
+                        timeStr,
                         style: GoogleFonts.nunitoSans(
                           fontSize: 18,
                           fontWeight: FontWeight.w900,
@@ -2085,7 +2144,11 @@ class _HomeScreenState extends State<HomeScreen>
     return Tooltip(
       message: tr(isTagalog, 'Voice Assistant', 'Voice Assistant'),
       child: InkWell(
-        onTap: (_isListening || _isProcessingVoice) ? null : _onSpeakCommand,
+        onTap: _isProcessingVoice 
+            ? null 
+            : _isListening 
+            ? _stopVoiceRecordingAndTranscribe 
+            : _onSpeakCommand,
         borderRadius: BorderRadius.circular(32),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 220),

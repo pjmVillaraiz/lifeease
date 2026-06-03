@@ -7,9 +7,15 @@ import 'package:lifeease/core/services/tts/tts_language_service.dart';
 
 class InworldTtsService {
   final EdgeAiService _edgeAi = EdgeAiService();
-  static const MethodChannel _channel = MethodChannel('lifeease/reminder_native');
+  static const MethodChannel _channel = MethodChannel(
+    'lifeease/reminder_native',
+  );
 
-  Future<String?> generateSpeechFile(String text, String id, {String? languageCode}) async {
+  Future<String?> generateSpeechFile(
+    String text,
+    String id, {
+    String? languageCode,
+  }) async {
     if (text.trim().isEmpty || id.trim().isEmpty) return null;
     try {
       final audioBytes = await _edgeAi.synthesizeSpeech(
@@ -33,7 +39,7 @@ class InworldTtsService {
 
   Future<bool> playAudio(String filePath) async {
     try {
-      await _channel.invokeMethod<void>('playAudioFile', {'filePath': filePath});
+      await _channel.invokeMethod<int>('playAudioFile', {'filePath': filePath});
       return true;
     } catch (e) {
       debugPrint('Error playing audio via native player: $e');

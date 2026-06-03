@@ -126,8 +126,8 @@ class MainActivity : FlutterFragmentActivity() {
                         return@setMethodCallHandler
                     }
                     ReminderSpeechPlayer.stop(null)
-                    ReminderAudioPlayer.play(applicationContext, filePath)
-                    result.success(null)
+                    val durationMs = ReminderAudioPlayer.play(applicationContext, filePath)
+                    result.success(durationMs)
                 }
                 "stopAudio" -> {
                     ReminderAudioPlayer.stop()
@@ -653,10 +653,11 @@ private object ReminderSpeechPlayer {
 private object ReminderAudioPlayer {
     private var mediaPlayer: MediaPlayer? = null
 
-    fun play(context: Context, filePath: String) {
+    fun play(context: Context, filePath: String): Int {
         stop()
-        try {
-            mediaPlayer = MediaPlayer().apply {
+        return try {
+            var durationMs = 0
+            val player = MediaPlayer().apply {
                 setDataSource(filePath)
                 setAudioAttributes(
                     AudioAttributes.Builder()
@@ -665,13 +666,17 @@ private object ReminderAudioPlayer {
                         .build()
                 )
                 prepare()
+                durationMs = duration
                 start()
                 setOnCompletionListener {
                     stop()
                 }
             }
+            mediaPlayer = player
+            durationMs
         } catch (e: Exception) {
             e.printStackTrace()
+            0
         }
     }
 

@@ -51,6 +51,9 @@ class ReminderNotificationService {
   static final ReminderNotificationService instance =
       ReminderNotificationService._();
 
+  static final StreamController<ReminderDueEvent> _dueReminderController =
+      StreamController<ReminderDueEvent>.broadcast();
+
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   final FlutterTts _tts = FlutterTts();
@@ -306,6 +309,8 @@ class ReminderNotificationService {
     final alarmId = _notificationIdFor(id);
     await handleAlarmFired(alarmId, _alarmParamsFor(reminder));
   }
+
+  Stream<ReminderDueEvent> get dueReminders => _dueReminderController.stream;
 
   Future<void> _requestPermissions() async {
     if (kIsWeb) return;
@@ -579,6 +584,7 @@ class ReminderNotificationService {
       debugPrint('Reminder notification failed: $error');
       debugPrintStack(stackTrace: stackTrace);
     }
+    _notifyDueReminder(alarmId, reminder, scheduledAt);
 
     final text = _spokenTextFor(reminder);
     final reminderId = id ?? 'unknown';
@@ -589,7 +595,9 @@ class ReminderNotificationService {
       final filePath = await inworldService.generateSpeechFile(
         text,
         reminderId,
-        languageCode: reminder['language']?.toString() ?? TtsLanguageService.currentLanguage.code,
+        languageCode:
+            reminder['language']?.toString() ??
+            TtsLanguageService.currentLanguage.code,
       );
       if (filePath != null && filePath.isNotEmpty) {
         inworldSuccess = await inworldService.playAudio(filePath);
@@ -817,6 +825,21 @@ class ReminderNotificationService {
     await _removeRepeatConfig(alarmId);
     await _rescheduleRepeatingReminder(id);
     debugPrint('Reminder $id marked missed after ignored retries.');
+  }
+
+  void _notifyDueReminder(
+    int alarmId,
+    Map<String, dynamic> reminder,
+    DateTime scheduledAt,
+  ) {
+    if (_dueReminderController.isClosed) return;
+    _dueReminderController.add(
+      ReminderDueEvent(
+        alarmId: alarmId,
+        reminder: Map<String, dynamic>.from(reminder),
+        scheduledAt: scheduledAt,
+      ),
+    );
   }
 
   Future<void> _enqueueSpeech(Future<void> Function() action) {
@@ -1311,4 +1334,16 @@ class _NotificationPayload {
 
   final int alarmId;
   final String reminderId;
+}
+
+class ReminderDueEvent {
+  const ReminderDueEvent({
+    required this.alarmId,
+    required this.reminder,
+    required this.scheduledAt,
+  });
+
+  final int alarmId;
+  final Map<String, dynamic> reminder;
+  final DateTime scheduledAt;
 }

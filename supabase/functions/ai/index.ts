@@ -283,10 +283,10 @@ async function tts(body: Record<string, unknown>) {
     },
     body: JSON.stringify({
       text: body.text,
-      voiceId: Deno.env.get("INWORLD_VOICE_ID") ?? "Dennis",
+      voiceId: Deno.env.get("INWORLD_VOICE_ID") ?? "Celeste",
       modelId: Deno.env.get("INWORLD_TTS_MODEL") ?? "inworld-tts-2",
       audioConfig: {
-        audioEncoding: Deno.env.get("INWORLD_AUDIO_ENCODING") ?? "LINEAR16",
+        audioEncoding: Deno.env.get("INWORLD_AUDIO_ENCODING") ?? "MP3",
         sampleRateHertz: Number(
           Deno.env.get("INWORLD_SAMPLE_RATE_HERTZ") ?? 22050,
         ),

@@ -100,6 +100,13 @@ class VoiceAssistantService {
     );
     body = body.replaceAll(
       RegExp(
+        r'^\s*(create a reminder|make reminder|make a reminder)\s*[:,-]?\s*',
+        caseSensitive: false,
+      ),
+      '',
+    );
+    body = body.replaceAll(
+      RegExp(
         r'^\s*(remind me to|paalalahanan mo ako na)\s+',
         caseSensitive: false,
       ),
@@ -167,6 +174,9 @@ class VoiceAssistantService {
     return text.contains('add reminder') ||
         text.contains('add a reminder') ||
         text.contains('create reminder') ||
+        text.contains('create a reminder') ||
+        text.contains('make reminder') ||
+        text.contains('make a reminder') ||
         text.contains('set reminder') ||
         text.contains('set a reminder') ||
         text.startsWith('remind me') ||
@@ -175,7 +185,28 @@ class VoiceAssistantService {
         text.startsWith('mag remind') ||
         text.startsWith('mag-remind') ||
         text.contains('magdagdag ng paalala') ||
-        text.contains('paalalahanan');
+        text.contains('paalalahanan') ||
+        _looksLikeReminderTask(text);
+  }
+
+  bool _looksLikeReminderTask(String text) {
+    return RegExp(
+          r'^\s*(take|drink|use|check|measure|make|book|schedule|uminom|inumin|gamitin|kunin)\b',
+        ).hasMatch(text) ||
+        [
+          'pill',
+          'pills',
+          'medicine',
+          'medication',
+          'meds',
+          'vitamin',
+          'vitamins',
+          'gamot',
+          'tableta',
+          'appointment',
+          'checkup',
+          'check-up',
+        ].any(text.contains);
   }
 
   ReminderQueryType? _reminderQueryType(String text) {
@@ -368,13 +399,16 @@ class VoiceAssistantService {
     final normalized = _normalize(rawText);
     if (!(normalized.contains('add reminder') ||
             normalized.contains('create reminder') ||
+            normalized.contains('create a reminder') ||
+            normalized.contains('make reminder') ||
+            normalized.contains('make a reminder') ||
             normalized.contains('set reminder')) ||
         !normalized.contains('time ') && !normalized.contains('oras ')) {
       return null;
     }
 
     final titleMatch = RegExp(
-      r'(?:add (?:a )?reminder|create reminder|set (?:a )?reminder)\s+(.+?)(?:\s+note\s+|\s+tala\s+|\s+today\b|\s+tomorrow\b|\s+ngayon\b|\s+bukas\b|\s+time\s+|\s+oras\s+|$)',
+      r'(?:add (?:a )?reminder|create (?:a )?reminder|make (?:a )?reminder|set (?:a )?reminder)\s+(.+?)(?:\s+note\s+|\s+tala\s+|\s+today\b|\s+tomorrow\b|\s+ngayon\b|\s+bukas\b|\s+time\s+|\s+oras\s+|$)',
       caseSensitive: false,
     ).firstMatch(rawText);
     final noteMatch = RegExp(

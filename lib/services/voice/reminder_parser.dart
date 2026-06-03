@@ -76,20 +76,44 @@ class ReminderParser {
 
   bool _looksLikeReminder(String text) {
     return _hasAny(text, const [
-      'remind me',
-      'add reminder',
-      'add a reminder',
-      'create reminder',
-      'set reminder',
-      'set a reminder',
-      'paalalahanan mo ako',
-      'paalalahanan',
-      'magdagdag ng paalala',
-      'paalala ako',
-      'reminder ako',
-      'mag remind',
-      'mag-remind',
-    ]);
+          'remind me',
+          'add reminder',
+          'add a reminder',
+          'create reminder',
+          'create a reminder',
+          'make reminder',
+          'make a reminder',
+          'set reminder',
+          'set a reminder',
+          'paalalahanan mo ako',
+          'paalalahanan',
+          'magdagdag ng paalala',
+          'paalala ako',
+          'reminder ako',
+          'mag remind',
+          'mag-remind',
+        ]) ||
+        _looksLikeImplicitTask(text);
+  }
+
+  bool _looksLikeImplicitTask(String text) {
+    return RegExp(
+          r'^\s*(take|drink|use|check|measure|make|book|schedule|uminom|inumin|gamitin|kunin)\b',
+        ).hasMatch(text) ||
+        _hasAny(text, const [
+          'pill',
+          'pills',
+          'medicine',
+          'medication',
+          'meds',
+          'vitamin',
+          'vitamins',
+          'gamot',
+          'tableta',
+          'appointment',
+          'checkup',
+          'check-up',
+        ]);
   }
 
   _DateResult _extractDate(String text, DateTime now) {
@@ -202,7 +226,7 @@ class ReminderParser {
     var title = rawText.trim();
     final cleanupPatterns = [
       r'^\s*(please\s+)?',
-      r'^\s*(remind me to|remind me|add reminder to|add reminder|add a reminder to|add a reminder|create reminder to|create reminder|set a reminder to|set a reminder|set reminder to|set reminder)\s+',
+      r'^\s*(remind me to|remind me|add reminder to|add reminder|add a reminder to|add a reminder|create reminder to|create reminder|create a reminder to|create a reminder|make reminder to|make reminder|make a reminder to|make a reminder|set a reminder to|set a reminder|set reminder to|set reminder)\s+',
       r'^\s*(paalalahanan mo ako na|paalalahanan mo ako|paalalahanan ako na|paalalahanan ako|magdagdag ng paalala na|magdagdag ng paalala|paalala ako na|paalala ako|reminder ako na|reminder ako|mag-?\s*remind ako na|mag-?\s*remind ako|mag-?\s*remind)\s+',
       r'\b(?:note|notes|tala)\s+.+$',
       r'\b(?:today|tomorrow|ngayon|bukas)\b',

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -21,6 +22,9 @@ class SpeechProcessingModule {
   final GroqService _groq = GroqService();
   final WhisperApiService _whisper = WhisperApiService();
   final InworldTtsService _inworldTts = InworldTtsService();
+  static const MethodChannel _nativeReminderChannel = MethodChannel(
+    'lifeease/reminder_native',
+  );
 
   bool _isSpeechReady = false;
   bool _isTtsReady = false;
@@ -29,6 +33,14 @@ class SpeechProcessingModule {
   final List<String> _transcriptHistory = [];
 
   List<String> get transcriptHistory => List.unmodifiable(_transcriptHistory);
+
+  Stream<double> groqAmplitudeDb({
+    Duration interval = const Duration(milliseconds: 250),
+  }) {
+    return _audioRecorder
+        .onAmplitudeChanged(interval)
+        .map((amplitude) => amplitude.current);
+  }
 
   Future<bool> initialize() async {
     final speechReady = await _initializeSpeech();
@@ -48,6 +60,7 @@ class SpeechProcessingModule {
 
   Future<void> _initializeTts() async {
     if (_isTtsReady) return;
+    await _tts.awaitSpeakCompletion(true);
     await _tts.setSpeechRate(0.48);
     await _tts.setPitch(1.0);
     await TtsLanguageService.applyCurrentLanguage(_tts);
@@ -210,8 +223,29 @@ class SpeechProcessingModule {
       volume: volume.clamp(0.0, 1.0),
     );
     if (!inworld.usedFallback && inworld.audioBytes != null) {
-      // The service is API-ready. Flutter playback of returned audio can be
-      // wired to an audio player package when production dependencies allow it.
+      try {
+        await _tts.stop();
+        final tempDir = await getTemporaryDirectory();
+        final file = File(
+          p.join(
+            tempDir.path,
+            'lifeease_inworld_${DateTime.now().millisecondsSinceEpoch}.mp3',
+          ),
+        );
+        await file.writeAsBytes(inworld.audioBytes!, flush: true);
+        final durationMs =
+            await _nativeReminderChannel.invokeMethod<int>('playAudioFile', {
+              'filePath': file.path,
+            }) ??
+            _estimatedSpeechDuration(text).inMilliseconds;
+        await Future<void>.delayed(
+          Duration(milliseconds: durationMs) +
+              const Duration(milliseconds: 350),
+        );
+        return;
+      } catch (error) {
+        debugPrint('Inworld assistant audio playback failed: $error');
+      }
     }
     await _initializeTts();
     await _tts.setSpeechRate(speed);
@@ -219,5 +253,13 @@ class SpeechProcessingModule {
     await TtsLanguageService.applyCurrentLanguage(_tts);
     await _tts.stop();
     await _tts.speak(text);
+  }
+
+  Duration _estimatedSpeechDuration(String text) {
+    final wordCount = text.trim().split(RegExp(r'\s+')).where((word) {
+      return word.isNotEmpty;
+    }).length;
+    final milliseconds = (wordCount * 430).clamp(1200, 12000);
+    return Duration(milliseconds: milliseconds);
   }
 }

@@ -1,5 +1,8 @@
 import 'package:lifeease/features/voice/application/voice_assistant_service.dart';
+import 'package:lifeease/services/translation/google_translation_service.dart';
 import 'package:lifeease/services/voice/reminder_parser.dart';
+
+typedef VoiceTextTranslator = Future<String> Function(String text);
 
 enum VoiceCommandIntent {
   createReminder,
@@ -28,6 +31,7 @@ class VoiceCommandResult {
     this.reminderDraft,
     this.reminderQueryType,
     this.navigationTarget,
+    this.reminderHasExplicitTime = false,
   });
 
   final VoiceCommandIntent intent;
@@ -36,6 +40,7 @@ class VoiceCommandResult {
   final VoiceReminderDraft? reminderDraft;
   final ReminderQueryType? reminderQueryType;
   final VoiceNavigationTarget? navigationTarget;
+  final bool reminderHasExplicitTime;
 
   bool get isRecognized => intent != VoiceCommandIntent.unknown;
 }
@@ -44,11 +49,46 @@ class CommandProcessor {
   CommandProcessor({
     VoiceAssistantService? assistant,
     ReminderParser? reminderParser,
+    GoogleTranslationService? translationService,
+    VoiceTextTranslator? translator,
   }) : _assistant = assistant ?? const VoiceAssistantService(),
-       _reminderParser = reminderParser ?? ReminderParser();
+       _reminderParser = reminderParser ?? ReminderParser(),
+       _translationService = translationService ?? GoogleTranslationService(),
+       _translator = translator;
 
   final VoiceAssistantService _assistant;
   final ReminderParser _reminderParser;
+  final GoogleTranslationService _translationService;
+  final VoiceTextTranslator? _translator;
+
+  Future<VoiceCommandResult> processAsync(String rawText) async {
+    final direct = process(rawText);
+    if (direct.isRecognized && !_mayNeedEnglishNormalization(rawText)) {
+      return direct;
+    }
+
+    final translatedText =
+        (await (_translator?.call(rawText) ??
+                _translationService.translateToEnglish(rawText)))
+            .trim();
+    if (translatedText.isEmpty ||
+        translatedText.toLowerCase() == rawText.trim().toLowerCase()) {
+      return direct;
+    }
+
+    final translated = process(translatedText);
+    if (!translated.isRecognized) return direct;
+
+    return VoiceCommandResult(
+      intent: translated.intent,
+      originalText: rawText,
+      normalizedText: translated.normalizedText,
+      reminderDraft: translated.reminderDraft,
+      reminderQueryType: translated.reminderQueryType,
+      navigationTarget: translated.navigationTarget,
+      reminderHasExplicitTime: translated.reminderHasExplicitTime,
+    );
+  }
 
   VoiceCommandResult process(String rawText) {
     final normalized = _normalize(rawText);
@@ -57,16 +97,26 @@ class CommandProcessor {
     }
 
     if (_isCreateReminder(normalized)) {
-      final parsed = _reminderParser.parse(_reminderText(rawText));
-      final draft = parsed == null
-          ? _assistant.parseReminder(_reminderText(rawText))
-          : _toVoiceReminderDraft(parsed);
+      final reminderText = _reminderText(rawText);
+      final parsed = _reminderParser.parse(reminderText);
+      if (parsed != null) {
+        return VoiceCommandResult(
+          intent: VoiceCommandIntent.createReminder,
+          originalText: rawText,
+          normalizedText: normalized,
+          reminderDraft: _toVoiceReminderDraft(parsed),
+          reminderHasExplicitTime: parsed.hasExplicitTime,
+        );
+      }
+
+      final draft = _assistant.parseReminder(reminderText);
       if (draft != null) {
         return VoiceCommandResult(
           intent: VoiceCommandIntent.createReminder,
           originalText: rawText,
           normalizedText: normalized,
           reminderDraft: draft,
+          reminderHasExplicitTime: _hasExplicitTime(_normalize(reminderText)),
         );
       }
     }
@@ -137,6 +187,24 @@ class CommandProcessor {
         'Add reminder ',
       );
     }
+    if (normalized.startsWith('create a reminder')) {
+      return trimmed.replaceFirst(
+        RegExp(r'^\s*create a reminder\s*', caseSensitive: false),
+        'Add reminder ',
+      );
+    }
+    if (normalized.startsWith('make reminder')) {
+      return trimmed.replaceFirst(
+        RegExp(r'^\s*make reminder\s*', caseSensitive: false),
+        'Add reminder ',
+      );
+    }
+    if (normalized.startsWith('make a reminder')) {
+      return trimmed.replaceFirst(
+        RegExp(r'^\s*make a reminder\s*', caseSensitive: false),
+        'Add reminder ',
+      );
+    }
     if (normalized.startsWith('reminder ako')) {
       return trimmed.replaceFirst(
         RegExp(r'^\s*reminder ako\s*', caseSensitive: false),
@@ -156,6 +224,9 @@ class CommandProcessor {
         'Add reminder ',
       );
     }
+    if (_isImplicitReminderAction(normalized)) {
+      return 'Add reminder $trimmed';
+    }
     return trimmed;
   }
 
@@ -173,19 +244,43 @@ class CommandProcessor {
 
   bool _isCreateReminder(String text) {
     return _hasAny(text, const [
-      'remind me',
-      'add reminder',
-      'add a reminder',
-      'create reminder',
-      'set reminder',
-      'set a reminder',
-      'magdagdag ng paalala',
-      'paalalahanan',
-      'paalala ako',
-      'reminder ako',
-      'mag remind',
-      'mag-remind',
-    ]);
+          'remind me',
+          'add reminder',
+          'add a reminder',
+          'create reminder',
+          'create a reminder',
+          'make reminder',
+          'make a reminder',
+          'set reminder',
+          'set a reminder',
+          'magdagdag ng paalala',
+          'paalalahanan',
+          'paalala ako',
+          'reminder ako',
+          'mag remind',
+          'mag-remind',
+        ]) ||
+        _isImplicitReminderAction(text);
+  }
+
+  bool _isImplicitReminderAction(String text) {
+    return RegExp(
+          r'^\s*(take|drink|use|check|measure|make|book|schedule|uminom|inumin|gamitin|kunin)\b',
+        ).hasMatch(text) ||
+        _hasAny(text, const [
+          'pill',
+          'pills',
+          'medicine',
+          'medication',
+          'meds',
+          'vitamin',
+          'vitamins',
+          'gamot',
+          'tableta',
+          'appointment',
+          'checkup',
+          'check-up',
+        ]);
   }
 
   ReminderQueryType? _reminderQuery(String text) {
@@ -329,5 +424,29 @@ class CommandProcessor {
 
   String _normalize(String value) {
     return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  bool _mayNeedEnglishNormalization(String rawText) {
+    final text = _normalize(rawText);
+    return _hasAny(text, const [
+      'paalala',
+      'paalalahanan',
+      'gamot',
+      'uminom',
+      'bukas',
+      'ngayon',
+      'araw-araw',
+      'kada',
+      'oras',
+      'umaga',
+      'gabi',
+      'tawag',
+      'tumawag',
+    ]);
+  }
+
+  bool _hasExplicitTime(String text) {
+    return RegExp(r'\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b').hasMatch(text) ||
+        _hasAny(text, const ['morning', 'evening', 'umaga', 'gabi']);
   }
 }

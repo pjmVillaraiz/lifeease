@@ -599,7 +599,7 @@ class _HomeScreenState extends State<HomeScreen>
           ampm = 'PM';
         }
         
-        final timeStr = '${displayHour}:${extractedTime.minute.toString().padLeft(2, '0')} $ampm';
+        final timeStr = '$displayHour:${extractedTime.minute.toString().padLeft(2, '0')} $ampm';
         final completedText = '$input at $timeStr';
         final completed = _commandProcessor.process(completedText);
         final draft = completed.reminderDraft;
@@ -1833,7 +1833,7 @@ class _HomeScreenState extends State<HomeScreen>
             'I-tap para magsalita',
           );
     
-    final onTapAction = () => unawaited(_onVoiceButtonTap());
+    void onTapAction() => unawaited(_onVoiceButtonTap());
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),

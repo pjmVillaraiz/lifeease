@@ -76,18 +76,12 @@ class ReminderNotificationService {
   static const String _darwinTagalogCategoryId = 'lifeease_reminder_actions_tl';
   static const String _repeatConfigPrefix = 'lifeease.reminder.repeat.';
   static const String _scheduledIdsKey = 'lifeease.reminder.scheduled_ids';
-<<<<<<< Updated upstream
   static const String _lastTimeZoneKey = 'lifeease.reminder.last_timezone';
   static const String _firedOccurrencePrefix =
       'lifeease.reminder.fired_occurrence.';
   static const Duration _lateReminderGrace = Duration(minutes: 5);
   static const Duration _ignoredRetryDelay = Duration(seconds: 30);
   static const int _maxIgnoredAttempts = 5;
-=======
-  static const String _localNotificationScheduledKey =
-      'localNotificationScheduled';
-  static const Duration _immediateFireGracePeriod = Duration(minutes: 2);
->>>>>>> Stashed changes
 
   Future<void> initialize({bool requestPermissions = true}) async {
     if (_initialized) {
@@ -194,7 +188,6 @@ class ReminderNotificationService {
       isRepeating: isRepeating,
       repeatIntervalMinutes: repeatIntervalMinutes,
     );
-<<<<<<< Updated upstream
     if (!notificationTime.isAfter(now)) {
       if (!isRepeating) {
         debugPrint(
@@ -216,61 +209,23 @@ class ReminderNotificationService {
       if (updated != null) {
         await scheduleReminder(updated);
       }
-=======
-    final now = DateTime.now();
-    if (!notificationTime.isAfter(now)) {
-      if (now.difference(scheduledAt) <= _immediateFireGracePeriod) {
-        final notificationId = _notificationIdFor(id);
-        final params = _alarmParamsFor(reminder);
-        await _cancelAlarmById(notificationId, removeTracking: false);
-        await handleAlarmFired(notificationId, params);
-        return;
-      }
-      debugPrint(
-        'Reminder scheduling skipped: computed time is too far in the past.',
-      );
->>>>>>> Stashed changes
       return;
     }
 
     final canScheduleExactAlarms = await _canScheduleExactAlarms();
     if (!canScheduleExactAlarms) {
       debugPrint(
-        'Exact alarm permission is not granted; using local notification '
-        'fallback.',
+        'Exact alarm permission is not granted; attempting to schedule anyway.',
       );
     }
 
     await _cancelAlarmById(notificationId, removeTracking: false);
 
-<<<<<<< Updated upstream
     final scheduled = await _scheduleAlarm(
-=======
-    final params = _alarmParamsFor(reminder);
-    final localScheduled = await _scheduleLocalNotification(
->>>>>>> Stashed changes
       notificationTime: notificationTime,
       alarmId: notificationId,
-      reminder: params,
-      canScheduleExactAlarms: canScheduleExactAlarms,
+      params: params,
     );
-    if (!localScheduled) {
-      debugPrint(
-        'Local notification scheduling failed for "$title" at '
-        '${notificationTime.toIso8601String()}.',
-      );
-    }
-
-    final alarmParams = localScheduled
-        ? {...params, _localNotificationScheduledKey: true}
-        : params;
-    final scheduled = canScheduleExactAlarms
-        ? await _scheduleAlarm(
-            notificationTime: notificationTime,
-            alarmId: notificationId,
-            params: alarmParams,
-          )
-        : false;
     var usedAlarmManager = scheduled;
     if (scheduled) {
       await _scheduleLocalNotification(
@@ -280,7 +235,7 @@ class ReminderNotificationService {
       );
     }
 
-    if (!scheduled && !localScheduled) {
+    if (!scheduled) {
       debugPrint(
         'Alarm manager scheduling failed for "$title" at '
         '${notificationTime.toIso8601String()}.',
@@ -289,7 +244,6 @@ class ReminderNotificationService {
         notificationTime: notificationTime,
         alarmId: notificationId,
         reminder: params,
-        canScheduleExactAlarms: false,
       );
       if (!fallbackScheduled) {
         debugPrint(
@@ -308,7 +262,7 @@ class ReminderNotificationService {
     );
     await _addScheduledId(notificationId);
     if (isRepeating && usedAlarmManager) {
-      await _saveRepeatConfig(notificationId, alarmParams);
+      await _saveRepeatConfig(notificationId, params);
     } else {
       await _removeRepeatConfig(notificationId);
     }
@@ -624,13 +578,11 @@ class ReminderNotificationService {
       return;
     }
 
-    if (reminder[_localNotificationScheduledKey] != true) {
-      try {
-        await _showReminderNotification(alarmId, reminder, scheduledAt);
-      } catch (error, stackTrace) {
-        debugPrint('Reminder notification failed: $error');
-        debugPrintStack(stackTrace: stackTrace);
-      }
+    try {
+      await _showReminderNotification(alarmId, reminder, scheduledAt);
+    } catch (error, stackTrace) {
+      debugPrint('Reminder notification failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
     }
     _notifyDueReminder(alarmId, reminder, scheduledAt);
 
@@ -1175,13 +1127,11 @@ class ReminderNotificationService {
     required DateTime notificationTime,
     required int alarmId,
     required Map<String, dynamic> reminder,
-    required bool canScheduleExactAlarms,
   }) async {
     try {
       final scheduledAt = _dateTimeFromValue(
         reminder['reminder_time'] ?? reminder['scheduledTimeMillis'],
       );
-<<<<<<< Updated upstream
       try {
         await _plugin.zonedSchedule(
           id: alarmId,
@@ -1207,19 +1157,6 @@ class ReminderNotificationService {
           payload: _payloadFor(alarmId, reminder),
         );
       }
-=======
-      await _plugin.zonedSchedule(
-        id: alarmId,
-        title: TtsLanguageService.notificationTitle(),
-        body: _bodyFor(reminder, scheduledAt ?? notificationTime),
-        scheduledDate: tz.TZDateTime.from(notificationTime, tz.local),
-        notificationDetails: _details(),
-        androidScheduleMode: canScheduleExactAlarms
-            ? AndroidScheduleMode.exactAllowWhileIdle
-            : AndroidScheduleMode.inexactAllowWhileIdle,
-        payload: _payloadFor(alarmId, reminder),
-      );
->>>>>>> Stashed changes
       return true;
     } catch (error, stackTrace) {
       debugPrint('Reminder fallback scheduling threw: $error');

@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
+import 'package:app_links/app_links.dart';
 
 import 'package:lifeease/core/navigation/app_navigator.dart';
 import 'package:lifeease/core/utils/app_export.dart';
@@ -13,6 +14,21 @@ import 'package:lifeease/core/services/backend/supabase_auth_service.dart';
 import 'package:lifeease/core/services/notifications/reminder_notification_service.dart';
 import 'package:lifeease/core/services/supabase_config.dart';
 import 'package:lifeease/shared/widgets/custom_error_widget.dart';
+
+class _DeepLinkHandler {
+  static void setup() {
+    final links = AppLinks();
+    links.uriLinkStream.listen((uri) {
+      if (uri.scheme == 'io.supabase.lifeease' &&
+          uri.host == 'reset-callback') {
+        AppNavigator.key.currentState?.pushNamedAndRemoveUntil(
+          AppRoutes.resetPasswordScreen,
+          (route) => false,
+        );
+      }
+    });
+  }
+}
 
 void main() async {
   // 1. Initialize Flutter bindings immediately
@@ -209,6 +225,7 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    _DeepLinkHandler.setup();
     return Sizer(
       builder: (context, orientation, screenType) {
         return AnimatedBuilder(

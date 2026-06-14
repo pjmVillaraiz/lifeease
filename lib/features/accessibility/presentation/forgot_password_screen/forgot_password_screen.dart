@@ -34,21 +34,19 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
     HapticFeedback.mediumImpact();
     setState(() => _isLoading = true);
-    try {
-      await _authService.sendPasswordReset(email);
-    } catch (_) {
-      // Keep the same message so the screen never reveals whether an email exists.
-    }
+    final result = await _authService.sendPasswordReset(email);
 
     if (!mounted) return;
     setState(() => _isLoading = false);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'If an account exists for that email, a reset link will be sent.',
+          result.success
+              ? 'If an account exists for that email, a reset link will be sent.'
+              : (result.message ?? 'Unable to send reset email.'),
           style: GoogleFonts.nunitoSans(fontSize: 15),
         ),
-        backgroundColor: AppTheme.success,
+        backgroundColor: result.success ? AppTheme.success : AppTheme.errorRed,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),

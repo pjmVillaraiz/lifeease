@@ -6,6 +6,7 @@ import 'package:lifeease/features/reminders/presentation/home_screen/home_screen
 import 'package:lifeease/features/accessibility/presentation/login_screen/login_screen.dart';
 import 'package:lifeease/features/accessibility/presentation/register_screen/register_screen.dart';
 import 'package:lifeease/features/accessibility/presentation/forgot_password_screen/forgot_password_screen.dart';
+import 'package:lifeease/features/accessibility/presentation/reset_password_screen/reset_password_screen.dart';
 import 'package:lifeease/features/accessibility/presentation/settings_screen/settings_screen.dart';
 import 'package:lifeease/features/accessibility/presentation/profile_screen/profile_screen.dart';
 
@@ -15,6 +16,7 @@ class AppRoutes {
   static const String loginScreen = '/login-screen';
   static const String registerScreen = '/register';
   static const String forgotPasswordScreen = '/forgot-password';
+  static const String resetPasswordScreen = '/reset-password';
   static const String addReminderScreen = '/add-reminder-screen';
   static const String allRemindersScreen = '/all-reminders-screen';
   static const String settingsScreen = '/settings-screen';
@@ -26,6 +28,7 @@ class AppRoutes {
     loginScreen: (context) => const LoginScreen(),
     registerScreen: (context) => const RegisterScreen(),
     forgotPasswordScreen: (context) => const ForgotPasswordScreen(),
+    resetPasswordScreen: (context) => const ResetPasswordScreen(),
     allRemindersScreen: (context) => const AllRemindersScreen(),
     settingsScreen: (context) => const SettingsScreen(),
     profileScreen: (context) => const ProfileScreen(),

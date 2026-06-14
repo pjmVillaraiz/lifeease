@@ -20,6 +20,8 @@ class SupabaseAuthService {
   static const String _userMode = 'user';
   static const String _guestMode = 'guest';
   static const String _demoMode = 'demo';
+  static const String _passwordResetRedirectUrl =
+      'io.supabase.lifeease://reset-callback/';
 
   SupabaseClient? get _client => SupabaseConfig.maybeClient;
 
@@ -182,8 +184,50 @@ class SupabaseAuthService {
 
   Future<void> rememberDemoSession() => _setSessionMode(_demoMode);
 
-  Future<void> sendPasswordReset(String email) async {
-    await _client?.auth.resetPasswordForEmail(email);
+  Future<LifeEaseAuthResult> sendPasswordReset(String email) async {
+    final client = _client;
+    if (client == null) {
+      return const LifeEaseAuthResult(
+        success: false,
+        message: 'Supabase is not configured.',
+      );
+    }
+
+    try {
+      await client.auth.resetPasswordForEmail(
+        email,
+        redirectTo: _passwordResetRedirectUrl,
+      );
+      return const LifeEaseAuthResult(success: true);
+    } on AuthException catch (error) {
+      return LifeEaseAuthResult(success: false, message: error.message);
+    } catch (_) {
+      return const LifeEaseAuthResult(
+        success: false,
+        message: 'Unable to send reset email.',
+      );
+    }
+  }
+
+  Future<LifeEaseAuthResult> completePasswordReset(String password) async {
+    final client = _client;
+    if (client == null) {
+      return const LifeEaseAuthResult(
+        success: false,
+        message: 'Supabase is not configured.',
+      );
+    }
+    try {
+      await client.auth.updateUser(UserAttributes(password: password));
+      return const LifeEaseAuthResult(success: true);
+    } on AuthException catch (error) {
+      return LifeEaseAuthResult(success: false, message: error.message);
+    } catch (_) {
+      return const LifeEaseAuthResult(
+        success: false,
+        message: 'Unable to update password.',
+      );
+    }
   }
 
   Future<void> signOut() async {

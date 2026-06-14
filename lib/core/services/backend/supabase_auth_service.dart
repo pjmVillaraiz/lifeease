@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -200,13 +201,52 @@ class SupabaseAuthService {
       );
       return const LifeEaseAuthResult(success: true);
     } on AuthException catch (error) {
+      if (_isEmailSendingFailure(error.message)) {
+        return _sendPasswordResetWithEdgeFunction(client, email);
+      }
       return LifeEaseAuthResult(success: false, message: error.message);
-    } catch (_) {
+    } catch (error) {
+      if (_isEmailSendingFailure(error.toString())) {
+        return _sendPasswordResetWithEdgeFunction(client, email);
+      }
+      debugPrint('Password reset email request failed: $error');
       return const LifeEaseAuthResult(
         success: false,
         message: 'Unable to send reset email.',
       );
     }
+  }
+
+  Future<LifeEaseAuthResult> _sendPasswordResetWithEdgeFunction(
+    SupabaseClient client,
+    String email,
+  ) async {
+    try {
+      await client.functions.invoke(
+        'password-reset',
+        method: 'POST',
+        body: {
+          'email': email,
+          'redirectTo': _passwordResetRedirectUrl,
+        },
+      );
+      return const LifeEaseAuthResult(success: true);
+    } catch (error) {
+      debugPrint('Password reset fallback email failed: $error');
+      return const LifeEaseAuthResult(
+        success: false,
+        message: 'Unable to send reset email. Please try again later.',
+      );
+    }
+  }
+
+  bool _isEmailSendingFailure(String message) {
+    final normalized = message.toLowerCase();
+    return normalized.contains('error sending recovery email') ||
+        normalized.contains('error sending confirmation email') ||
+        normalized.contains('email rate limit') ||
+        normalized.contains('smtp') ||
+        normalized.contains('mail provider');
   }
 
   Future<LifeEaseAuthResult> completePasswordReset(String password) async {

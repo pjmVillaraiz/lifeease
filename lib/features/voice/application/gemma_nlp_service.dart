@@ -31,6 +31,7 @@ class GemmaNlpService {
   final http.Client _client;
 
   static const _modelChain = [
+    'gemini-2.5-flash',
     'gemma-2-2b-it',
     'gemini-2.0-flash-lite',
     'gemini-2.0-flash',

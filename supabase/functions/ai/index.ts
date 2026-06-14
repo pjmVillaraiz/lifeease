@@ -118,7 +118,7 @@ async function nlp(body: Record<string, unknown>) {
 
 async function parseWithGemma(body: Record<string, unknown>) {
   const apiKey = Deno.env.get("GEMINI_API_KEY") ?? Deno.env.get("GEMMA_API_KEY");
-  const model = Deno.env.get("GEMMA_MODEL") ?? "gemma-2-2b-it";
+  const model = Deno.env.get("GEMMA_MODEL") ?? "gemini-2.5-flash";
   const text = String(body.text ?? "").trim();
   if (!apiKey || !text) return null;
 

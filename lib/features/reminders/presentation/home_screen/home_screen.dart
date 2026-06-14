@@ -1960,48 +1960,63 @@ class _HomeScreenState extends State<HomeScreen>
       ),
     );
   }
-
   Widget _buildVoiceParserBadge(ThemeData theme, bool isTagalog) {
     final label = _voiceParserLabel;
     if (label == null) return const SizedBox.shrink();
-
-    final badgeColor = _voiceUsedGemma
-        ? theme.colorScheme.primaryContainer
-        : theme.colorScheme.surfaceContainerHighest;
-    final badgeTextColor = _voiceUsedGemma
-        ? theme.colorScheme.onPrimaryContainer
-        : theme.colorScheme.onSurfaceVariant;
-    final icon = _voiceUsedGemma ? Icons.auto_awesome : Icons.rule;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color: badgeColor,
-            borderRadius: BorderRadius.circular(999),
+            gradient: _voiceUsedGemma
+                ? const LinearGradient(
+                    colors: [
+                      Color(0xFF2196F3),
+                      Color(0xFF9C27B0),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  )
+                : null,
+            color: _voiceUsedGemma
+                ? null
+                : theme.colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(20),
             border: Border.all(
               color: _voiceUsedGemma
-                  ? theme.colorScheme.primary.withAlpha(80)
+                  ? Colors.blue.shade300.withAlpha(150)
                   : theme.colorScheme.outlineVariant,
+              width: 1.5,
             ),
+            boxShadow: _voiceUsedGemma
+                ? [
+                    BoxShadow(
+                      color: Colors.purple.withAlpha(60),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 14, color: badgeTextColor),
+              Icon(
+                _voiceUsedGemma ? Icons.auto_awesome : Icons.rule,
+                size: 14,
+                color: _voiceUsedGemma ? Colors.white : theme.colorScheme.onSurfaceVariant,
+              ),
               const SizedBox(width: 6),
               Text(
-                tr(
-                  isTagalog,
-                  'Parser: $label',
-                  'Parser: $label',
-                ),
+                _voiceUsedGemma
+                    ? tr(isTagalog, 'AI Parser Active (Gemma)', 'Aktibong AI Parser (Gemma)')
+                    : tr(isTagalog, 'Offline Fallback (Rules)', 'Offline Fallback (Rules)'),
                 style: GoogleFonts.nunitoSans(
                   fontSize: 12,
                   fontWeight: FontWeight.w800,
-                  color: badgeTextColor,
+                  color: _voiceUsedGemma ? Colors.white : theme.colorScheme.onSurfaceVariant,
                 ),
               ),
             ],

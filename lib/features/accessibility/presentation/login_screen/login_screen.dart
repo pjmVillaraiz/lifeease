@@ -111,13 +111,7 @@ class _LoginScreenState extends State<LoginScreen>
 
     if (!mounted) return;
 
-    final isDemoFallback =
-        email == 'user@lifeease.ph' && password == 'LifeEase2025';
-    if (result.success || isDemoFallback) {
-      if (isDemoFallback && !result.success) {
-        await _authService.rememberDemoSession();
-        if (!mounted) return;
-      }
+    if (result.success) {
       setState(() => _isLoading = false);
       Navigator.pushNamedAndRemoveUntil(
         context,
@@ -160,20 +154,7 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  Future<void> _continueAsGuest() async {
-    HapticFeedback.mediumImpact();
-    setState(() => _isLoading = true);
-    final result = await _authService.continueAsGuest();
-    if (!mounted) return;
-    setState(() => _isLoading = false);
-    if (result.success) {
-      Navigator.pushNamedAndRemoveUntil(
-        context,
-        AppRoutes.homeScreen,
-        (route) => false,
-      );
-    }
-  }
+
 
   void _showAuthMessage(String message, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -186,15 +167,7 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  void _autofillCredentials() {
-    setState(() {
-      _emailController.text = 'user@lifeease.ph';
-      _passwordController.text = 'LifeEase2025';
-      _emailError = null;
-      _passwordError = null;
-    });
-    HapticFeedback.lightImpact();
-  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -253,12 +226,8 @@ class _LoginScreenState extends State<LoginScreen>
               _buildDivider(theme),
               const SizedBox(height: 20),
               _buildGoogleButton(theme),
-              const SizedBox(height: 12),
-              _buildGuestButton(theme),
               const SizedBox(height: 24),
               _buildFooterLinks(theme),
-              const SizedBox(height: 24),
-              _buildDemoCredentialsBox(theme),
               const SizedBox(height: 32),
             ],
           ),
@@ -295,12 +264,8 @@ class _LoginScreenState extends State<LoginScreen>
                 _buildDivider(theme),
                 const SizedBox(height: 20),
                 _buildGoogleButton(theme),
-                const SizedBox(height: 12),
-                _buildGuestButton(theme),
                 const SizedBox(height: 24),
                 _buildFooterLinks(theme),
-                const SizedBox(height: 24),
-                _buildDemoCredentialsBox(theme),
               ],
             ),
           ),
@@ -648,27 +613,7 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  Widget _buildGuestButton(ThemeData theme) {
-    return OutlinedButton.icon(
-      onPressed: _isLoading ? null : _continueAsGuest,
-      icon: const Icon(Icons.person_outline_rounded, size: 22),
-      label: Text(
-        'Continue as Guest',
-        style: GoogleFonts.nunitoSans(
-          fontSize: 17,
-          fontWeight: FontWeight.w700,
-          color: AppTheme.primaryBlue,
-        ),
-      ),
-      style: OutlinedButton.styleFrom(
-        foregroundColor: AppTheme.primaryBlue,
-        side: const BorderSide(color: AppTheme.primaryBlue, width: 1.5),
-        minimumSize: const Size(double.infinity, 56),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        backgroundColor: theme.colorScheme.surface,
-      ),
-    );
-  }
+
 
   Widget _buildFooterLinks(ThemeData theme) {
     return Row(
@@ -701,117 +646,7 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  Widget _buildDemoCredentialsBox(ThemeData theme) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppTheme.primaryContainer,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.primaryBlue.withAlpha(64), width: 1),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              CustomIconWidget(
-                iconName: 'info',
-                color: AppTheme.primaryBlue,
-                size: 18,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Demo Account',
-                style: GoogleFonts.nunitoSans(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: AppTheme.primaryBlue,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          _buildCredentialRow(theme, 'Email', 'user@lifeease.ph'),
-          const SizedBox(height: 6),
-          _buildCredentialRow(theme, 'Password', 'LifeEase2025'),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: TextButton(
-              onPressed: _autofillCredentials,
-              style: TextButton.styleFrom(
-                backgroundColor: AppTheme.primaryBlue,
-                foregroundColor: Colors.white,
-                minimumSize: const Size(double.infinity, 40),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-              ),
-              child: Text(
-                'Use Demo Account',
-                style: GoogleFonts.nunitoSans(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
-  Widget _buildCredentialRow(ThemeData theme, String label, String value) {
-    return Row(
-      children: [
-        SizedBox(
-          width: 72,
-          child: Text(
-            label,
-            style: GoogleFonts.nunitoSans(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.onSurface.withAlpha(153),
-            ),
-          ),
-        ),
-        Expanded(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: Colors.white.withAlpha(179),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              value,
-              style: GoogleFonts.nunitoSans(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: theme.colorScheme.onSurface,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 6),
-        GestureDetector(
-          onTap: () {
-            Clipboard.setData(ClipboardData(text: value));
-            HapticFeedback.lightImpact();
-          },
-          child: Container(
-            padding: const EdgeInsets.all(4),
-            child: Icon(
-              Icons.copy_rounded,
-              size: 16,
-              color: AppTheme.primaryBlue,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
 
   Widget _buildLoadingOverlay(ThemeData theme) {
     return Positioned.fill(

@@ -10,6 +10,7 @@ import 'package:lifeease/shared/widgets/app_navigation.dart';
 import 'package:lifeease/shared/widgets/emergency_fab_widget.dart';
 import 'package:lifeease/shared/widgets/empty_state_widget.dart';
 import 'package:lifeease/shared/widgets/loading_skeleton_widget.dart';
+import 'package:lifeease/shared/widgets/custom_image_widget.dart';
 
 import 'package:lifeease/core/services/backend/reminder_repository.dart';
 import 'package:lifeease/core/services/backend/supabase_auth_service.dart';
@@ -1770,11 +1771,28 @@ class _HomeScreenState extends State<HomeScreen>
       child: Row(
         children: [
           GestureDetector(
-            onTap: () => Navigator.pushNamed(context, AppRoutes.profileScreen),
-            child: CircleAvatar(
-              radius: 30,
-              backgroundColor: theme.colorScheme.primaryContainer,
-              backgroundImage: const AssetImage('assets/images/avatar.png'),
+            onTap: () => Navigator.pushNamed(context, AppRoutes.profileScreen).then((_) {
+              _loadProfileName();
+            }),
+            child: Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: theme.colorScheme.primaryContainer,
+                  width: 2,
+                ),
+              ),
+              child: ClipOval(
+                child: CustomImageWidget(
+                  imageUrl:
+                      'https://images.pexels.com/photos/1181519/pexels-photo-1181519.jpeg',
+                  width: 60,
+                  height: 60,
+                  fit: BoxFit.cover,
+                ),
+              ),
             ),
           ),
           const SizedBox(width: 16),

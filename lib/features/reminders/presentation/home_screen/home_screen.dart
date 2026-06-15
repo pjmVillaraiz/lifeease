@@ -16,6 +16,7 @@ import 'package:lifeease/core/services/backend/supabase_auth_service.dart';
 import 'package:lifeease/core/services/backend/user_profile_service.dart';
 import 'package:lifeease/core/services/emergency/emergency_route_processing_module.dart';
 import 'package:lifeease/core/services/notifications/reminder_notification_service.dart';
+import 'package:lifeease/features/reminders/application/ai_suggestion_service.dart';
 import 'package:lifeease/features/reminders/application/due_reminder_prompt_coordinator.dart';
 import 'package:lifeease/features/reminders/application/location_reminder_service.dart';
 import 'package:lifeease/features/reminders/application/reminder_insights_service.dart';
@@ -29,6 +30,7 @@ import 'package:lifeease/services/voice/command_processor.dart';
 import 'package:lifeease/services/voice/voice_reminder_hints.dart';
 import 'package:lifeease/services/voice/voice_time_parser.dart';
 
+import './widgets/ai_suggestion_card.dart';
 import './widgets/reminder_card_widget.dart';
 
 class _GuidedFrequency {
@@ -67,6 +69,8 @@ class _HomeScreenState extends State<HomeScreen>
   String? _voiceParserLabel = 'AI Parser Active (Gemma)';
   String? _voiceParserDetail;
   String? _firstName;
+  String? _aiSuggestion;
+  bool _showAiSuggestion = true;
 
   late final ReminderRepository _reminderRepository;
   late final SupabaseAuthService _authService;
@@ -75,6 +79,7 @@ class _HomeScreenState extends State<HomeScreen>
   late final VoiceAssistantService _assistantService;
   late final CommandProcessor _commandProcessor;
   late final ReminderInsightsService _insightsService;
+  late final AiSuggestionService _aiSuggestionService;
   late final LanguageTranslationProcessingModule _translationProcessor;
   late final EmergencyRouteProcessingModule _emergencyRouteProcessor;
   late final SusProcessingModule _susProcessor;
@@ -107,6 +112,7 @@ class _HomeScreenState extends State<HomeScreen>
     _assistantService = const VoiceAssistantService();
     _commandProcessor = CommandProcessor(assistant: _assistantService);
     _insightsService = const ReminderInsightsService();
+    _aiSuggestionService = AiSuggestionService();
     _translationProcessor = LanguageTranslationProcessingModule();
     _emergencyRouteProcessor = EmergencyRouteProcessingModule();
     _susProcessor = SusProcessingModule();
@@ -217,12 +223,27 @@ class _HomeScreenState extends State<HomeScreen>
       _isLoading = false;
     });
 
+    _loadAiSuggestion(loaded);
     _listEntranceController.forward(from: 0.0);
     unawaited(
       DueReminderPromptCoordinator.instance.showRecentlyDueReminderPrompts(
         loaded,
       ),
     );
+  }
+
+  Future<void> _loadAiSuggestion(List<ReminderModel> reminders) async {
+    final stats = _insightsService.statsFor(
+      reminders,
+      period: ReminderStatsPeriod.day,
+    );
+    final suggestion = await _aiSuggestionService.fetchSuggestion(reminders, stats);
+    if (mounted && suggestion != null) {
+      setState(() {
+        _aiSuggestion = suggestion;
+        _showAiSuggestion = true;
+      });
+    }
   }
 
   Future<void> _reconcileDueReminders() async {
@@ -1748,6 +1769,13 @@ class _HomeScreenState extends State<HomeScreen>
                   SliverToBoxAdapter(
                     child: _buildStatusCards(theme, isTagalog),
                   ),
+                  if (_showAiSuggestion && _aiSuggestion != null)
+                    SliverToBoxAdapter(
+                      child: AiSuggestionCard(
+                        suggestion: _aiSuggestion!,
+                        onDismiss: () => setState(() => _showAiSuggestion = false),
+                      ),
+                    ),
                   SliverToBoxAdapter(
                     child: _buildTodayScheduleSummary(theme, isTagalog),
                   ),

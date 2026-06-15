@@ -224,7 +224,7 @@ class SupabaseAuthService {
     try {
       await client.functions.invoke(
         'password-reset',
-        method: 'POST',
+        method: HttpMethod.post,
         body: {
           'email': email,
           'redirectTo': _passwordResetRedirectUrl,

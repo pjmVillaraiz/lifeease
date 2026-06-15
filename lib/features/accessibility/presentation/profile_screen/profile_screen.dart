@@ -22,6 +22,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final UserProfileService _profileService = UserProfileService();
   bool _isEditing = false;
   List<UserEmergencyContact> _emergencyContacts = const [];
+  EmergencyContactsSyncState _contactsSyncState =
+      EmergencyContactsSyncState.localOnly;
 
   String tr(bool isTagalog, String en, String tl) => isTagalog ? tl : en;
 
@@ -49,7 +51,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _loadProfile() async {
     final profile = await _profileService.loadProfile();
-    final contacts = await _profileService.loadEmergencyContacts();
+    final contactsSnapshot =
+        await _profileService.loadEmergencyContactsSnapshot();
 
     if (!mounted) return;
     setState(() {
@@ -58,7 +61,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _phoneController.text = profile.phone ?? '';
       _birthdateController.text = profile.birthdate ?? '';
       _conditionsController.text = profile.medicalConditions ?? '';
-      _emergencyContacts = contacts;
+      _emergencyContacts = contactsSnapshot.contacts;
+      _contactsSyncState = contactsSnapshot.syncState;
     });
   }
 
@@ -208,6 +212,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 'emergency',
               ),
               _buildCard(theme, [
+                _buildContactsSyncBanner(theme, isTagalog),
+                if (_emergencyContacts.isNotEmpty) _buildDivider(theme),
                 for (var i = 0; i < _emergencyContacts.length; i++) ...[
                   if (i > 0) _buildDivider(theme),
                   _buildContactTile(
@@ -586,6 +592,107 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Widget _buildContactsSyncBanner(ThemeData theme, bool isTagalog) {
+    final (
+      IconData icon,
+      String title,
+      String subtitle,
+      Color color,
+    ) = switch (_contactsSyncState) {
+      EmergencyContactsSyncState.synced => (
+          Icons.cloud_done_rounded,
+          tr(isTagalog, 'Synced to Supabase', 'Naka-sync sa Supabase'),
+          tr(
+            isTagalog,
+            'These contacts will be restored after you log in again.',
+            'Maibabalik ang contacts na ito kapag nag-log in ka muli.',
+          ),
+          AppTheme.success,
+        ),
+      EmergencyContactsSyncState.fallbackLocal => (
+          Icons.cloud_off_rounded,
+          tr(isTagalog, 'Saved locally for now', 'Naka-save muna sa device'),
+          tr(
+            isTagalog,
+            'We kept a local copy and will try syncing again later.',
+            'Naka-save ang local copy at susubukan ulit mag-sync mamaya.',
+          ),
+          AppTheme.warning,
+        ),
+      EmergencyContactsSyncState.guest => (
+          Icons.devices_other_rounded,
+          tr(isTagalog, 'Guest mode', 'Guest mode'),
+          tr(
+            isTagalog,
+            'Saved on this device only.',
+            'Naka-save lang sa device na ito.',
+          ),
+          AppTheme.primaryBlue,
+        ),
+      EmergencyContactsSyncState.localOnly => (
+          Icons.device_unknown_rounded,
+          tr(isTagalog, 'Saved on this device', 'Naka-save sa device'),
+          tr(
+            isTagalog,
+            'Sign in to sync these contacts to Supabase.',
+            'Mag-sign in para ma-sync ang contacts sa Supabase.',
+          ),
+          AppTheme.primaryBlue,
+        ),
+    };
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 1.5.h),
+      child: Container(
+        padding: EdgeInsets.all(3.w),
+        decoration: BoxDecoration(
+          color: color.withAlpha(24),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withAlpha(60)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: color.withAlpha(32),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: color, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: GoogleFonts.nunitoSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: GoogleFonts.nunitoSans(
+                      fontSize: 12.5,
+                      color: theme.colorScheme.onSurfaceVariant,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildLogoutButton(ThemeData theme) {
     return Container(
       decoration: BoxDecoration(
@@ -745,9 +852,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _saveEmergencyContacts(
     List<UserEmergencyContact> contacts,
   ) async {
-    await _profileService.saveEmergencyContacts(contacts);
+    final syncState = await _profileService.syncEmergencyContacts(contacts);
     if (!mounted) return;
-    setState(() => _emergencyContacts = contacts);
+    setState(() {
+      _emergencyContacts = contacts;
+      _contactsSyncState = syncState;
+    });
   }
 
   Future<void> _openEditContactPage(int index) async {

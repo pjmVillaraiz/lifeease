@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/services.dart';
 
 import 'package:lifeease/core/services/backend/reminder_repository.dart';
+import 'package:lifeease/core/services/backend/user_profile_service.dart';
 import 'package:lifeease/core/services/notifications/reminder_notification_service.dart';
 import 'package:lifeease/core/services/tts/tts_language_service.dart';
 import 'package:lifeease/core/utils/app_export.dart';
@@ -61,6 +62,8 @@ class _AddReminderScreenState extends State<AddReminderScreen>
   final ReminderRepository _reminderRepository = ReminderRepository();
   final RuleBasedSchedulingEngine _schedulingEngine =
       RuleBasedSchedulingEngine();
+  final UserProfileService _profileService = UserProfileService();
+  List<EmergencyContact> _emergencyContacts = const [];
 
   String? _titleError;
   String? _timeError;
@@ -70,23 +73,6 @@ class _AddReminderScreenState extends State<AddReminderScreen>
   late AnimationController _entranceController;
   late Animation<double> _formFade;
   late Animation<Offset> _formSlide;
-
-  final List<EmergencyContact> _emergencyContacts = const [
-    EmergencyContact(
-      id: 1,
-      name: 'Maria Santos',
-      phone: '+639171234567',
-      relationship: 'Daughter',
-      priority: 1,
-    ),
-    EmergencyContact(
-      id: 2,
-      name: 'Dr. Reyes',
-      phone: '+639281234567',
-      relationship: 'Doctor',
-      priority: 2,
-    ),
-  ];
 
   @override
   void initState() {
@@ -151,8 +137,9 @@ class _AddReminderScreenState extends State<AddReminderScreen>
             parent: _entranceController,
             curve: Curves.easeOutCubic,
           ),
-        );
+    );
     _entranceController.forward();
+    _loadEmergencyContacts();
   }
 
   @override
@@ -162,6 +149,24 @@ class _AddReminderScreenState extends State<AddReminderScreen>
     _descriptionController.dispose();
     _locationNameController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadEmergencyContacts() async {
+    final contacts = await _profileService.loadEmergencyContacts();
+    if (!mounted) return;
+
+    setState(
+      () => _emergencyContacts = contacts.asMap().entries.map((entry) {
+        final index = entry.key;
+        final contact = entry.value;
+        return EmergencyContact(
+          name: contact.name,
+          phone: contact.phone,
+          relationship: contact.relationship,
+          priority: index + 1,
+        );
+      }).toList(),
+    );
   }
 
   bool _isTimeInPast() {

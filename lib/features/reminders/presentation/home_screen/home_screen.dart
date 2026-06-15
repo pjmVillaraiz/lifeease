@@ -10,7 +10,6 @@ import 'package:lifeease/shared/widgets/app_navigation.dart';
 import 'package:lifeease/shared/widgets/emergency_fab_widget.dart';
 import 'package:lifeease/shared/widgets/empty_state_widget.dart';
 import 'package:lifeease/shared/widgets/loading_skeleton_widget.dart';
-import 'package:lifeease/shared/widgets/custom_image_widget.dart';
 
 import 'package:lifeease/core/services/backend/reminder_repository.dart';
 import 'package:lifeease/core/services/backend/supabase_auth_service.dart';
@@ -88,16 +87,7 @@ class _HomeScreenState extends State<HomeScreen>
   bool _isReconcilingDueReminders = false;
   bool _hasScheduledLoadedReminders = false;
   late AnimationController _listEntranceController;
-
-  static const List<EmergencyContact> _emergencyContacts = [
-    EmergencyContact(
-      id: 1,
-      name: 'Caregiver',
-      phone: '112',
-      relationship: 'Primary',
-      priority: 1,
-    ),
-  ];
+  List<EmergencyContact> _emergencyContacts = const [];
 
   String tr(bool isTagalog, String en, String tl) {
     return isTagalog ? tl : en;
@@ -132,6 +122,7 @@ class _HomeScreenState extends State<HomeScreen>
     LocationReminderService.instance.start();
     _loadReminders();
     _loadProfileName();
+    _loadEmergencyContacts();
   }
 
   @override
@@ -151,6 +142,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (state == AppLifecycleState.resumed) {
       _loadReminders(showLoading: false);
       _loadProfileName();
+      _loadEmergencyContacts();
       LocationReminderService.instance.start();
     } else if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
@@ -174,6 +166,24 @@ class _HomeScreenState extends State<HomeScreen>
     final profile = await _profileService.loadProfile();
     if (!mounted) return;
     setState(() => _firstName = profile.resolvedFirstName);
+  }
+
+  Future<void> _loadEmergencyContacts() async {
+    final contacts = await _profileService.loadEmergencyContacts();
+    if (!mounted) return;
+
+    setState(
+      () => _emergencyContacts = contacts.asMap().entries.map((entry) {
+        final index = entry.key;
+        final contact = entry.value;
+        return EmergencyContact(
+          name: contact.name,
+          phone: contact.phone,
+          relationship: contact.relationship,
+          priority: index + 1,
+        );
+      }).toList(),
+    );
   }
 
   Future<void> _loadReminders({bool showLoading = true}) async {
@@ -673,6 +683,17 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _openEmergencyAction() async {
+    if (_emergencyContacts.isEmpty) {
+      _showSnack(
+        tr(
+          LanguageController.isTagalog.value,
+          'Add an emergency contact in Profile first.',
+          'Magdagdag muna ng emergency contact sa Profile.',
+        ),
+      );
+      return;
+    }
+
     final phone = _emergencyContacts.first.phone;
     final launched = await _emergencyRouteProcessor.call(phone);
     if (!mounted) return;
@@ -1773,6 +1794,7 @@ class _HomeScreenState extends State<HomeScreen>
           GestureDetector(
             onTap: () => Navigator.pushNamed(context, AppRoutes.profileScreen).then((_) {
               _loadProfileName();
+              _loadEmergencyContacts();
             }),
             child: Container(
               width: 60,

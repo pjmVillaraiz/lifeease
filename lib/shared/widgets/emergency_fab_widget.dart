@@ -87,7 +87,7 @@ class _EmergencyFabWidgetState extends State<EmergencyFabWidget>
           ],
         ),
         content: Text(
-          'Add an emergency contact in Settings first.',
+          'Add an emergency contact in Profile first.',
           style: GoogleFonts.nunitoSans(fontSize: 16, height: 1.5),
         ),
         actions: [

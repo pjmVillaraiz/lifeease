@@ -64,12 +64,29 @@ class UserEmergencyContact {
     );
   }
 
-  Map<String, String> toMap() => {
+  Map<String, dynamic> toMap() => {
     'name': name,
     'relationship': relationship,
     'phone': phone,
     'avatarUrl': avatarUrl,
   };
+}
+
+enum EmergencyContactsSyncState {
+  synced,
+  localOnly,
+  fallbackLocal,
+  guest,
+}
+
+class EmergencyContactsSnapshot {
+  final List<UserEmergencyContact> contacts;
+  final EmergencyContactsSyncState syncState;
+
+  const EmergencyContactsSnapshot({
+    required this.contacts,
+    required this.syncState,
+  });
 }
 
 class UserProfileService {
@@ -194,8 +211,149 @@ class UserProfileService {
   }
 
   Future<List<UserEmergencyContact>> loadEmergencyContacts() async {
+    return (await loadEmergencyContactsSnapshot()).contacts;
+  }
+
+  Future<EmergencyContactsSnapshot> loadEmergencyContactsSnapshot() async {
     final prefs = await SharedPreferences.getInstance();
     final prefix = await _storagePrefix();
+    final localContacts = _readEmergencyContactsFromPrefs(prefs, prefix);
+
+    final client = SupabaseConfig.maybeClient;
+    final user = _authService.currentUser;
+    final isGuest = await _authService.isGuestSession;
+    if (isGuest || client == null || user == null) {
+      return EmergencyContactsSnapshot(
+        contacts: localContacts,
+        syncState: isGuest
+            ? EmergencyContactsSyncState.guest
+            : EmergencyContactsSyncState.localOnly,
+      );
+    }
+
+    try {
+      final rows = await client
+          .from('emergency_contacts')
+          .select('name, phone, relationship, priority, created_at')
+          .eq('user_id', user.id)
+          .order('priority', ascending: true)
+          .order('created_at', ascending: true);
+
+      final rowsList = rows as List;
+      if (rowsList.isNotEmpty) {
+        final remoteContacts = rowsList
+            .whereType<Map>()
+            .map(
+              (item) => UserEmergencyContact(
+                name: item['name']?.toString() ?? '',
+                relationship: item['relationship']?.toString() ?? '',
+                phone: item['phone']?.toString() ?? '',
+                avatarUrl:
+                    item['avatarUrl']?.toString() ??
+                    'https://images.pexels.com/photos/1181519/pexels-photo-1181519.jpeg',
+              ),
+            )
+            .where(
+              (contact) =>
+                  contact.name.trim().isNotEmpty &&
+                  contact.phone.trim().isNotEmpty,
+            )
+            .toList();
+
+        await _saveEmergencyContactsLocally(
+          prefs,
+          prefix,
+          remoteContacts,
+        );
+        return EmergencyContactsSnapshot(
+          contacts: remoteContacts,
+          syncState: EmergencyContactsSyncState.synced,
+        );
+      }
+
+      if (localContacts.isNotEmpty) {
+        await saveEmergencyContacts(localContacts);
+        return EmergencyContactsSnapshot(
+          contacts: localContacts,
+          syncState: EmergencyContactsSyncState.fallbackLocal,
+        );
+      }
+    } catch (_) {
+      // Fall back to the local cache when remote sync is unavailable.
+    }
+
+    return EmergencyContactsSnapshot(
+      contacts: localContacts,
+      syncState: localContacts.isEmpty
+          ? EmergencyContactsSyncState.localOnly
+          : EmergencyContactsSyncState.fallbackLocal,
+    );
+  }
+
+  Future<void> saveEmergencyContacts(
+    List<UserEmergencyContact> contacts,
+  ) async {
+    await syncEmergencyContacts(contacts);
+  }
+
+  Future<EmergencyContactsSyncState> syncEmergencyContacts(
+    List<UserEmergencyContact> contacts,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final prefix = await _storagePrefix();
+    final cleanedContacts = contacts
+        .where(
+          (contact) =>
+              contact.name.trim().isNotEmpty &&
+              contact.phone.trim().isNotEmpty,
+        )
+        .toList();
+
+    await _saveEmergencyContactsLocally(prefs, prefix, cleanedContacts);
+
+    final client = SupabaseConfig.maybeClient;
+    final user = _authService.currentUser;
+    final isGuest = await _authService.isGuestSession;
+    if (isGuest || client == null || user == null) {
+      return isGuest
+          ? EmergencyContactsSyncState.guest
+          : EmergencyContactsSyncState.localOnly;
+    }
+
+    try {
+      await client
+          .from('emergency_contacts')
+          .delete()
+          .eq('user_id', user.id);
+
+      if (cleanedContacts.isEmpty) {
+        return EmergencyContactsSyncState.synced;
+      }
+
+      final remoteRows = cleanedContacts.asMap().entries.map((entry) {
+        final index = entry.key;
+        final contact = entry.value;
+        return {
+          'user_id': user.id,
+          'name': contact.name.trim(),
+          'phone': contact.phone.trim(),
+          'relationship': contact.relationship.trim(),
+          'priority': index + 1,
+        };
+      }).toList();
+
+      await client.from('emergency_contacts').insert(remoteRows);
+      return EmergencyContactsSyncState.synced;
+    } catch (_) {
+      // Keep the local copy even if remote sync fails.
+      return EmergencyContactsSyncState.fallbackLocal;
+    }
+  }
+
+  List<UserEmergencyContact> _readEmergencyContactsFromPrefs(
+    SharedPreferences prefs,
+    String prefix,
+  ) {
     final raw = prefs.getString(_scopedKey(prefix, emergencyContactsKey));
     if (raw == null || raw.trim().isEmpty) return const [];
 
@@ -220,20 +378,13 @@ class UserProfileService {
     }
   }
 
-  Future<void> saveEmergencyContacts(
+  Future<void> _saveEmergencyContactsLocally(
+    SharedPreferences prefs,
+    String prefix,
     List<UserEmergencyContact> contacts,
   ) async {
-    final prefs = await SharedPreferences.getInstance();
-    final prefix = await _storagePrefix();
     final encoded = jsonEncode(
-      contacts
-          .map((contact) => contact.toMap())
-          .where(
-            (contact) =>
-                contact['name']?.trim().isNotEmpty == true &&
-                contact['phone']?.trim().isNotEmpty == true,
-          )
-          .toList(),
+      contacts.map((contact) => contact.toMap()).toList(),
     );
     await prefs.setString(_scopedKey(prefix, emergencyContactsKey), encoded);
   }

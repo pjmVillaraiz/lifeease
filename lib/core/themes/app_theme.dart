@@ -373,14 +373,16 @@ class AppTheme {
         labelTextStyle: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
             return GoogleFonts.nunitoSans(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.5,
               color: primary,
             );
           }
           return GoogleFonts.nunitoSans(
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            letterSpacing: -0.5,
             color: onSurface.withAlpha(153),
           );
         }),

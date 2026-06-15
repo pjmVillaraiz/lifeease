@@ -2463,15 +2463,18 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   ),
                 ),
-                TextButton.icon(
+                const SizedBox(width: 8),
+                IconButton(
                   onPressed: _readTodaySchedule,
                   icon: const Icon(Icons.volume_up),
-                  label: Text(
-                    tr(
-                      isTagalog,
-                      "Read Today's Schedule",
-                      'Basahin ang Iskedyul Ngayon',
-                    ),
+                  tooltip: tr(
+                    isTagalog,
+                    "Read Today's Schedule",
+                    'Basahin ang Iskedyul Ngayon',
+                  ),
+                  style: IconButton.styleFrom(
+                    backgroundColor: theme.colorScheme.primaryContainer.withAlpha(100),
+                    foregroundColor: theme.colorScheme.primary,
                   ),
                 ),
               ],

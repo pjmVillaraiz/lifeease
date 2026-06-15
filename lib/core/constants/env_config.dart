@@ -65,6 +65,23 @@ class EnvConfig {
 
   static String? get openAiApiKey => maybeGet('OPENAI_API_KEY');
   static String? get geminiApiKey => maybeGet('GEMINI_API_KEY');
+
+  static List<String> get geminiApiKeys {
+    final keysString = maybeGet('GEMINI_API_KEYS');
+    if (keysString != null && keysString.isNotEmpty) {
+      return keysString
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => !isPlaceholder(e) && e.isNotEmpty)
+          .toList();
+    }
+    final singleKey = geminiApiKey;
+    if (singleKey != null && !isPlaceholder(singleKey)) {
+      return [singleKey];
+    }
+    return [];
+  }
+
   static String? get groqApiKey => maybeGet('GROQ_API_KEY');
   static String? get inworldApiKey => maybeGet('INWORLD_API_KEY');
   static String? get cloudTranslationApiKey =>

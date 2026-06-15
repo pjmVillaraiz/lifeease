@@ -57,7 +57,8 @@ class VoiceCommandResult {
 
   String parserBadgeLabel({required bool isTagalog}) {
     if (usedGemma) {
-      return isTagalog ? 'Gemma 2 AI' : 'Gemma 2 AI';
+      final model = nlpModelUsed?.trim() ?? 'Gemma 2';
+      return isTagalog ? '$model AI' : '$model AI';
     }
     return isTagalog ? 'Lokal na parser' : 'Local rules';
   }

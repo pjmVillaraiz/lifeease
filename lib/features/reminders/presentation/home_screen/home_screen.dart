@@ -63,8 +63,8 @@ class _HomeScreenState extends State<HomeScreen>
   bool _voiceListenCancelled = false;
   String _liveTranscript = '';
   String _voiceStatus = '';
-  bool _voiceUsedGemma = false;
-  String? _voiceParserLabel;
+  bool _voiceUsedGemma = true;
+  String? _voiceParserLabel = 'AI Parser Active (Gemma)';
   String? _voiceParserDetail;
   String? _firstName;
 
@@ -318,8 +318,8 @@ class _HomeScreenState extends State<HomeScreen>
   void _clearVoiceParserResult() {
     if (!mounted) return;
     setState(() {
-      _voiceUsedGemma = false;
-      _voiceParserLabel = null;
+      _voiceUsedGemma = true;
+      _voiceParserLabel = 'AI Parser Active (Gemma)';
       _voiceParserDetail = null;
     });
   }
@@ -1961,8 +1961,7 @@ class _HomeScreenState extends State<HomeScreen>
                               ),
                             ],
                             if (_voiceParserLabel != null &&
-                                !_isListening &&
-                                !_isProcessingVoice) ...[
+                                !_isListening) ...[
                               const SizedBox(height: 10),
                               _buildVoiceParserBadge(theme, isTagalog),
                             ],

@@ -31,8 +31,13 @@ class GemmaNlpService {
   final http.Client _client;
 
   static const _modelChain = [
-    'gemini-2.5-flash',
+    'gemma-4-9b-it',
+    'gemma-4-2b-it',
     'gemma-2-2b-it',
+    'gemma-2-9b-it',
+    'gemma-1.1-7b-it',
+    'gemma-1.1-2b-it',
+    'gemini-2.5-flash',
     'gemini-2.0-flash-lite',
     'gemini-2.0-flash',
   ];
@@ -41,7 +46,7 @@ class GemmaNlpService {
   int? _lastStatusCode;
   String? _lastModelAttempted;
 
-  bool get isAvailable => EnvConfig.hasRealValue('GEMINI_API_KEY');
+  bool get isAvailable => EnvConfig.geminiApiKeys.isNotEmpty;
 
   String? get lastErrorMessage => _lastErrorMessage;
   int? get lastStatusCode => _lastStatusCode;
@@ -68,7 +73,7 @@ class GemmaNlpService {
       );
     }
 
-    final apiKey = EnvConfig.geminiApiKey!;
+    final apiKeys = EnvConfig.geminiApiKeys;
     final models = <String>{
       modelName,
       ..._modelChain,
@@ -77,13 +82,24 @@ class GemmaNlpService {
     String? lastError;
     int? lastStatus;
 
-    for (final model in models) {
-      _lastModelAttempted = model;
-      final result = await _request(apiKey, model, trimmed);
-      if (result.isSuccess) return result;
+    for (final apiKey in apiKeys) {
+      bool keyQuotaExceeded = false;
+      for (final model in models) {
+        _lastModelAttempted = model;
+        final result = await _request(apiKey, model, trimmed);
+        if (result.isSuccess) return result;
 
-      lastError = result.errorMessage ?? lastError;
-      lastStatus = result.statusCode ?? lastStatus;
+        lastError = result.errorMessage ?? lastError;
+        lastStatus = result.statusCode ?? lastStatus;
+        
+        if (lastStatus == 429) {
+          keyQuotaExceeded = true;
+          break; // Quota exceeded for this API key, try the next one
+        }
+      }
+      
+      // If we got a successful response (handled above) or an error that isn't 429,
+      // we already tried all models for this key. We loop to the next key just in case.
     }
 
     _lastErrorMessage = lastError ?? 'Gemma request failed.';

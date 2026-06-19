@@ -57,26 +57,33 @@ class AiSuggestionService {
       },
     });
 
-    // We use a fast, reasoning model if available or default gemini-2.5-flash
-    const model = 'gemini-2.5-flash';
+    final models = [
+      'gemini-2.5-flash',
+      'gemini-2.0-flash-lite',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+    ];
 
     for (final apiKey in apiKeys) {
-      try {
-        final url = 'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=\${Uri.encodeQueryComponent(apiKey)}';
-        final response = await _client.post(
-          Uri.parse(url),
-          headers: {'Content-Type': 'application/json'},
-          body: body,
-        );
+      for (final model in models) {
+        try {
+          final url = 'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=${Uri.encodeQueryComponent(apiKey)}';
+          final response = await _client.post(
+            Uri.parse(url),
+            headers: {'Content-Type': 'application/json'},
+            body: body,
+          ).timeout(const Duration(seconds: 5));
 
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body) as Map<String, dynamic>;
-          return _extractContent(data);
-        } else if (response.statusCode != 429) {
-          // If it's not a quota issue, we could just try the next API key or return null
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body) as Map<String, dynamic>;
+            final suggestion = _extractContent(data);
+            if (suggestion != null && suggestion.trim().isNotEmpty) {
+              return suggestion;
+            }
+          }
+        } catch (_) {
+          // Continue to next model or API key
         }
-      } catch (_) {
-        // Continue to the next API key
       }
     }
 
